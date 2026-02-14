@@ -1,0 +1,14 @@
+Int,
+Identifier(
+    "main",
+),
+OpenParenthesis,
+Void,
+ClosedParenthesis,
+OpenCurlyBrace,
+Return,
+IntegerConstant(
+    2,
+),
+Semicolon,
+ClosedCurlyBrace,

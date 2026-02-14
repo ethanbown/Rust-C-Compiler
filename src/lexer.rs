@@ -1,0 +1,217 @@
+use std::{io::{Read, Write},
+          fs::{File}};
+use regex::{Regex, RegexSet};
+
+#[cfg(test)]
+mod tests {
+    use std::fs::{self, read_to_string};
+    use std::path::{Path};
+
+    use crate::compiler_driver::*;
+
+    #[test]
+    fn test_lexer_output() {
+        let path = Path::new("/home/werea/writing-a-c-compiler-tests/tests/chapter_1/valid/");
+        for entry in fs::read_dir(path).expect("Failed to read directory.") {
+            let file = match entry {
+                Ok(file) => file,
+                Err(error) => panic!("Problem opening file in directory: {error}")
+            };
+            let file = path.join(Path::new(&file.file_name()));
+            let path_data = create_pathdata(&file);
+            stop_at_lex(&file);
+            check_lexer_output(&path_data);
+        }
+    }
+
+    fn check_lexer_output(pd: &super::PathData) {
+        let lexer_output_path = "/home/werea/c_compiler/lexer_outputs/".to_string() + pd.file_stem.as_str() + ".lex";
+        let lexer_correct_path = "/home/werea/c_compiler/lexer_tests/".to_string() + pd.file_stem.as_str() + "_correct.lex";
+
+        dbg!(&lexer_output_path);
+        dbg!(&lexer_correct_path);
+
+        let mut output_result = Vec::new();
+
+        for line in read_to_string(lexer_output_path).unwrap().lines() {
+            output_result.push(line.to_string())
+        }
+
+        let mut correct_result  = Vec::new();
+
+        for line in read_to_string(lexer_correct_path).unwrap().lines() {
+            correct_result.push(line.to_string())
+        }
+
+        if output_result != correct_result {
+            dbg!(output_result);
+            dbg!(correct_result);
+            panic!("Lexer output result does not match correct result")
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Tokens {
+    // Tokens with values
+    Identifier(String),
+    IntegerConstant(i32),
+
+    // Characters
+    OpenParenthesis,
+    ClosedParenthesis,
+    OpenCurlyBrace,
+    ClosedCurlyBrace,
+    Semicolon,
+
+    // Keywords
+    Int,
+    Return,
+    Void,
+
+    // Other
+    Invalid
+}
+
+pub struct PathData {
+    pub file_stem: String,
+    pub file_parent: String,
+    pub file_path: String
+}
+
+pub fn lexer(path: &String, pd: &PathData) -> Vec<Tokens> {
+    let mut file =
+        match File::open(&path) {
+            Ok(file) => file,
+            Err(why) => panic!("Failed to open '{}' in lexer: {}", path, why)
+        };
+
+    let mut data = String::new();
+    match file.read_to_string(&mut data) {
+        Ok(_) => (),
+        Err(why) => panic!("Failed to read data from '{}' into string in lexer: {}", path, why)
+    }
+
+    let token_patterns = [
+        r"^[a-zA-Z_]\w*\b",
+        r"^[0-9]+\b",
+        r"^int\b",
+        r"^void\b",
+        r"^return\b",
+        r"^\(",
+        r"^\)",
+        r"^\{",
+        r"^\}",
+        r"^;"
+    ];
+
+    let token_set = RegexSet::new(token_patterns).unwrap();
+
+    // Recommended to compile patterns independently
+    let regexes : Vec<_> = token_set
+        .patterns()
+        .iter()
+        .map(|pattern| Regex::new(pattern).unwrap())
+        .collect();
+
+    let mut tokens: Vec<Tokens> = Vec::new();
+
+    data = data.trim_start().to_string();
+    while !data.is_empty() {
+        let (token, longest_match) = match_tokens(&data, &token_set, &regexes);
+        tokens.push(token);
+        data = String::from(data.strip_prefix(longest_match.as_str()).unwrap());
+        data = data.trim_start().to_string();
+    }
+
+    write_lexer_output(pd, &tokens);
+    tokens
+}
+
+fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>) -> (Tokens, String)  {
+    let data_str = data.as_str();
+    // And then scan again to collect matches
+    let matches: Vec<&str> = token_set
+        .matches(data_str)
+        .into_iter()
+        .map(|index| &regexes[index])
+        .map(|regex| regex.find(data_str).unwrap().as_str())
+        .collect();
+
+    let mut longest_match = "";
+    for mat in matches {
+        if mat.len() > longest_match.len() {
+            longest_match = mat;
+        }
+    }
+    
+    let token = 
+        match longest_match {
+            "int" => Tokens::Int,
+            "void" => Tokens::Void,
+            "return" => Tokens::Return,
+            "(" => Tokens::OpenParenthesis,
+            ")" => Tokens::ClosedParenthesis,
+            "{" => Tokens::OpenCurlyBrace,
+            "}" => Tokens::ClosedCurlyBrace,
+            ";" => Tokens::Semicolon,
+            _ => {
+                let identifier = Regex::new(r"[a-zA-Z_]\w*").unwrap();
+                let constant = Regex::new(r"[0-9]+").unwrap();
+                let t;
+
+                let is_identifier = 
+                    match identifier.find(longest_match) {
+                        Some(id) => !id.is_empty(),
+                        None => false
+                    };
+
+                let is_constant = 
+                    match constant.find(longest_match) {
+                        Some(cons) => !cons.is_empty(),
+                        None => false
+                    };
+                
+                if is_identifier {
+                    t = Tokens::Identifier(String::from(longest_match));
+                }
+                else if is_constant {
+                    t = Tokens::IntegerConstant(longest_match.parse().expect("Failed to transform constant into i32."))
+                }
+                else {
+                    t = Tokens::Invalid
+                }
+                t
+            }
+        };
+    match token {
+        Tokens::Invalid => panic!("Invalid token."),
+        _ => ()
+    }
+    (token, longest_match.to_string())
+}
+
+fn write_lexer_output(pd: &PathData, tokens: &Vec<Tokens>) {
+    let lexer_output_path = "/home/werea/c_compiler/lexer_outputs/".to_string() + pd.file_stem.as_str() + ".lex";
+
+    let mut lexer_output_file = File::create(lexer_output_path).expect("Failed to create lexer file.");
+
+    for token in tokens {
+        let mut data;
+        match token {
+            Tokens::Int => data = String::from("Int"),
+            Tokens::Void => data = String::from("Void"),
+            Tokens::Return => data = String::from("Return"),
+            Tokens::Semicolon => data = String::from("Semicolon"),
+            Tokens::OpenCurlyBrace => data = String::from("OpenCurlyBrace"),
+            Tokens::ClosedCurlyBrace => data = String::from("ClosedCurlyBrace"),
+            Tokens::OpenParenthesis => data = String::from("OpenParenthesis"),
+            Tokens::ClosedParenthesis =>data = String::from("ClosedParenthesis"),
+            Tokens::Identifier(id) => data = String::from("Identifier(\n    \"") + id + "\",\n)",
+            Tokens::IntegerConstant(num) => data = String::from("IntegerConstant(\n    ") + num.to_string().as_str() + ",\n)",
+            _ => data = String::from("")
+        }
+        data += ",\n";
+        lexer_output_file.write(data.as_bytes()).expect("Failed to write to lexer output file");
+    }
+}
