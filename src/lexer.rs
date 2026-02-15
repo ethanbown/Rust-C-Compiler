@@ -51,7 +51,7 @@ mod tests {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Tokens {
     // Tokens with values
     Identifier(String),
@@ -68,6 +68,11 @@ pub enum Tokens {
     Int,
     Return,
     Void,
+
+    // Operators
+    Complement,
+    Negation,
+    Decrement,
 
     // Other
     Invalid
@@ -102,7 +107,10 @@ pub fn lexer(path: &String, pd: &PathData) -> Vec<Tokens> {
         r"^\)",
         r"^\{",
         r"^\}",
-        r"^;"
+        r"^;",
+        r"^-",
+        r"^--",
+        r"~"
     ];
 
     let token_set = RegexSet::new(token_patterns).unwrap();
@@ -114,6 +122,7 @@ pub fn lexer(path: &String, pd: &PathData) -> Vec<Tokens> {
         .map(|pattern| Regex::new(pattern).unwrap())
         .collect();
 
+    // Collect tokens to return
     let mut tokens: Vec<Tokens> = Vec::new();
 
     data = data.trim_start().to_string();
@@ -130,6 +139,7 @@ pub fn lexer(path: &String, pd: &PathData) -> Vec<Tokens> {
 
 fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>) -> (Tokens, String)  {
     let data_str = data.as_str();
+
     // And then scan again to collect matches
     let matches: Vec<&str> = token_set
         .matches(data_str)
@@ -155,6 +165,9 @@ fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>) -> (T
             "{" => Tokens::OpenCurlyBrace,
             "}" => Tokens::ClosedCurlyBrace,
             ";" => Tokens::Semicolon,
+            "-" => Tokens::Negation,
+            "--" => Tokens::Decrement,
+            "~" => Tokens::Complement,
             _ => {
                 let identifier = Regex::new(r"[a-zA-Z_]\w*").unwrap();
                 let constant = Regex::new(r"[0-9]+").unwrap();
@@ -184,6 +197,8 @@ fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>) -> (T
                 t
             }
         };
+    
+
     match token {
         Tokens::Invalid => panic!("Invalid token."),
         _ => ()
@@ -199,17 +214,20 @@ fn write_lexer_output(pd: &PathData, tokens: &Vec<Tokens>) {
     for token in tokens {
         let mut data;
         match token {
-            Tokens::Int => data = String::from("Int"),
-            Tokens::Void => data = String::from("Void"),
-            Tokens::Return => data = String::from("Return"),
-            Tokens::Semicolon => data = String::from("Semicolon"),
-            Tokens::OpenCurlyBrace => data = String::from("OpenCurlyBrace"),
-            Tokens::ClosedCurlyBrace => data = String::from("ClosedCurlyBrace"),
-            Tokens::OpenParenthesis => data = String::from("OpenParenthesis"),
-            Tokens::ClosedParenthesis =>data = String::from("ClosedParenthesis"),
-            Tokens::Identifier(id) => data = String::from("Identifier(\n    \"") + id + "\",\n)",
+            Tokens::Int                        => data = String::from("Int"),
+            Tokens::Void                       => data = String::from("Void"),
+            Tokens::Return                     => data = String::from("Return"),
+            Tokens::Semicolon                  => data = String::from("Semicolon"),
+            Tokens::OpenCurlyBrace             => data = String::from("OpenCurlyBrace"),
+            Tokens::ClosedCurlyBrace           => data = String::from("ClosedCurlyBrace"),
+            Tokens::OpenParenthesis            => data = String::from("OpenParenthesis"),
+            Tokens::ClosedParenthesis          => data = String::from("ClosedParenthesis"),
+            Tokens::Decrement                  => data = String::from("Decrement"),
+            Tokens::Negation                   => data = String::from("Negation"),
+            Tokens::Complement                 => data = String::from("Complement"),
+            Tokens::Identifier(id)    => data = String::from("Identifier(\n    \"") + id + "\",\n)",
             Tokens::IntegerConstant(num) => data = String::from("IntegerConstant(\n    ") + num.to_string().as_str() + ",\n)",
-            _ => data = String::from("")
+            Tokens::Invalid                    => data = String::from("Invalid Token")
         }
         data += ",\n";
         lexer_output_file.write(data.as_bytes()).expect("Failed to write to lexer output file");

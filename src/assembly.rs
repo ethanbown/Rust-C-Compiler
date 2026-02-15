@@ -64,6 +64,7 @@ fn assembly_parse_instructions(ast: &Statement) -> Vec<Instructions> {
 fn assembly_parse_exp(ast: &Exp) -> Operand {
     let return_val = match ast {
         Exp::Constant(num) => Operand::Imm(*num),
+        Exp::Unary(operator, exp) => panic!("NOT IMPLEMENTED YET")
     };
     return_val
 }
