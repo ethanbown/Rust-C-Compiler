@@ -1,5 +1,4 @@
 use crate::lexer::Tokens;
-use crate::parser::parser_ast::UnaryOperator;
 
 pub mod parser_ast {
     #[derive(Debug)]
@@ -35,6 +34,7 @@ use parser_ast::Program as Program;
 use parser_ast::FunctionDefinition as FunctionDefinition;
 use parser_ast::Statement as Statement;
 use parser_ast::Exp as Exp;
+use parser_ast::UnaryOperator as UnaryOperator;
 
 pub fn parser(tokens: &mut Vec<Tokens>) -> Program {
     tokens.reverse();
@@ -43,7 +43,7 @@ pub fn parser(tokens: &mut Vec<Tokens>) -> Program {
         panic!("more than just a main function");
     }
 
-    dbg!(&ast);
+    // dbg!(&ast);
 
     ast
 }
