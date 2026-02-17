@@ -1,4 +1,5 @@
 use crate::lexer::Tokens;
+use crate::parser::parser_ast::BinaryOperator;
 
 pub mod parser_ast {
     #[derive(Debug)]
@@ -20,13 +21,37 @@ pub mod parser_ast {
     #[derive(Debug)]
     pub enum Exp {
         Constant(i32),
-        Unary(UnaryOperator, Box<Exp>)
+        Unary(UnaryOperator, Box<Exp>),
+        Binary(BinaryOperator, Box<Exp>, Box<Exp>)
     }
 
     #[derive(Debug)]
     pub enum UnaryOperator {
         Complement,
-        Negate
+        Negate,
+        LogicalNot
+    }
+
+    #[derive(Debug)]
+    pub enum BinaryOperator {
+        Add,
+        Subtract,
+        Multiply,
+        Divide,
+        Remainder,
+        BitwiseAND,
+        BitwiseOR,
+        BitwiseXOR,
+        LeftShift,
+        RightShift,
+        LogicalAND,
+        LogicalOR,
+        EqualTo,
+        NotEqualTo,
+        LessThan,
+        GreaterThan,
+        LessOrEqual,
+        GreaterOrEqual
     }
 }
 
@@ -43,7 +68,7 @@ pub fn parser(tokens: &mut Vec<Tokens>) -> Program {
         panic!("more than just a main function");
     }
 
-    // dbg!(&ast);
+    //dbg!(&ast);
 
     ast
 }
@@ -75,30 +100,41 @@ fn parse_identifier(tokens: &mut Vec<Tokens>) -> String {
 
 fn parse_statement(tokens: &mut Vec<Tokens>) -> Statement {
     expected_token(Tokens::Return, tokens);
-    let return_val = parse_exp(tokens);
+    let return_val = parse_exp(tokens, 0);
     expected_token(Tokens::Semicolon, tokens);
     Statement::Return(return_val)
 }
 
-fn parse_exp(tokens: &mut Vec<Tokens>) -> Exp {
+fn parse_exp(tokens: &mut Vec<Tokens>, min_prec: i32) -> Exp {
+    let mut left = parse_factor(tokens);
+    let mut next_token = peek(tokens);
+    while is_binop(&next_token) && precedence(&next_token) >= min_prec {
+        let operator = parse_binop(tokens);
+        let right = parse_exp(tokens, precedence(&next_token) + 1);
+        left = Exp::Binary(operator, Box::new(left), Box::new(right));
+        next_token = peek(tokens);
+    }
+    return left;
+}
+
+fn parse_factor(tokens: &mut Vec<Tokens>) -> Exp {
     let next_token = peek(tokens);
     if is_int(&next_token) {
         let return_val = parse_int(tokens);
         Exp::Constant(return_val)
     }
-    else if next_token == Tokens::Complement || next_token == Tokens::Negation {
+    else if next_token == Tokens::Complement || next_token == Tokens::Negation || next_token == Tokens::LogicalNOT {
         let operator = parse_unop(tokens);
-        let inner_exp = parse_exp(tokens);
+        let inner_exp = parse_factor(tokens);
         return Exp::Unary(operator, Box::new(inner_exp))
     } else if next_token == Tokens::OpenParenthesis {
         take_token(tokens);
-        let inner_exp = parse_exp(tokens);
+        let inner_exp = parse_exp(tokens, 0);
         expected_token(Tokens::ClosedParenthesis, tokens);
         return inner_exp
     } else {
         panic!("Malformed expression: {next_token:?}")
     }
-    
 }
 
 fn parse_int(tokens: &mut Vec<Tokens>) -> i32 {
@@ -113,11 +149,37 @@ fn parse_int(tokens: &mut Vec<Tokens>) -> i32 {
 fn parse_unop(tokens: &mut Vec<Tokens>) -> UnaryOperator {
     let unop = take_token(tokens);
     let unop = match unop {
-        Tokens::Negation => UnaryOperator::Negate,
-        Tokens::Complement => UnaryOperator::Complement,
+        Tokens::Negation    => UnaryOperator::Negate,
+        Tokens::Complement  => UnaryOperator::Complement,
+        Tokens::LogicalNOT  => UnaryOperator::LogicalNot, 
         _ => panic!("Failure in parse_unop.")
     };
     unop
+}
+
+fn parse_binop(tokens: &mut Vec<Tokens>) -> BinaryOperator {
+    let token = take_token(tokens);
+    match token {
+        Tokens::Add            => BinaryOperator::Add,
+        Tokens::Negation       => BinaryOperator::Subtract,
+        Tokens::Multiply       => BinaryOperator::Multiply,
+        Tokens::Divide         => BinaryOperator::Divide,
+        Tokens::Remainder      => BinaryOperator::Remainder,
+        Tokens::BitwiseAND     => BinaryOperator::BitwiseAND,
+        Tokens::BitwiseXOR     => BinaryOperator::BitwiseXOR,
+        Tokens::BitwiseOR      => BinaryOperator::BitwiseOR,
+        Tokens::LeftShift      => BinaryOperator::LeftShift,
+        Tokens::RightShift     => BinaryOperator::RightShift,
+        Tokens::LogicalAND     => BinaryOperator::LogicalAND,
+        Tokens::LogicalOR      => BinaryOperator::LogicalOR,
+        Tokens::EqualTo        => BinaryOperator::EqualTo,
+        Tokens::NotEqualTo     => BinaryOperator::NotEqualTo,
+        Tokens::LessThan       => BinaryOperator::LessThan,
+        Tokens::GreaterThan    => BinaryOperator::GreaterThan,
+        Tokens::LessOrEqual    => BinaryOperator::LessOrEqual,
+        Tokens::GreaterOrEqual => BinaryOperator::GreaterOrEqual,
+        _ => panic!("Issue in parse_binop")
+    }
 }
 
 fn expected_token(expected: Tokens, tokens: &mut Vec<Tokens>) {
@@ -146,5 +208,47 @@ fn is_int(token: &Tokens) -> bool {
     match token {
         Tokens::IntegerConstant(_) => true,
         _ => false
+    }
+}
+
+fn is_binop(token: &Tokens) -> bool {
+    match token {
+        Tokens::Add       
+        | Tokens::Negation 
+        | Tokens::Divide   
+        | Tokens::Multiply 
+        | Tokens::Remainder
+        | Tokens::BitwiseAND
+        | Tokens::BitwiseOR
+        | Tokens::BitwiseXOR
+        | Tokens::LeftShift
+        | Tokens::RightShift 
+        | Tokens::LogicalAND
+        | Tokens::LogicalOR 
+        | Tokens::EqualTo 
+        | Tokens::NotEqualTo
+        | Tokens::LessThan
+        | Tokens::GreaterThan
+        | Tokens::LessOrEqual
+        | Tokens::GreaterOrEqual => (),
+        _ => return false
+    }
+    true
+}
+
+fn precedence(next_token: &Tokens) -> i32 {
+    match next_token {
+        Tokens::Multiply | Tokens::Divide | Tokens::Remainder => 60,
+        Tokens::Add | Tokens::Negation                        => 55,
+        Tokens::LeftShift | Tokens::RightShift                => 50,
+        Tokens::LessThan | Tokens::LessOrEqual
+        | Tokens::GreaterThan | Tokens::GreaterOrEqual        => 45,
+        Tokens::EqualTo | Tokens::NotEqualTo                  => 42,
+        Tokens::BitwiseAND                                    => 40,
+        Tokens::BitwiseXOR                                    => 35,
+        Tokens::BitwiseOR                                     => 30,
+        Tokens::LogicalAND                                    => 25,
+        Tokens::LogicalOR                                     => 20,
+        _ => panic!("Non-valid token in precedence: {next_token:?}")
     }
 }

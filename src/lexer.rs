@@ -73,6 +73,24 @@ pub enum Tokens {
     Complement,
     Negation,
     Decrement,
+    LogicalNOT,
+    Add,
+    Multiply,
+    Divide,
+    Remainder,
+    BitwiseAND,
+    BitwiseOR,
+    BitwiseXOR,
+    LeftShift,
+    RightShift,
+    LogicalAND,
+    LogicalOR,
+    EqualTo,
+    NotEqualTo,
+    LessThan,
+    GreaterThan,
+    LessOrEqual,
+    GreaterOrEqual,
 
     // Other
     Invalid
@@ -110,7 +128,25 @@ pub fn lexer(path: &String, pd: &PathData) -> Vec<Tokens> {
         r"^;",
         r"^-",
         r"^--",
-        r"~"
+        r"^~",
+        r"^\+",
+        r"^\*",
+        r"^/",
+        r"^%",
+        r"^&",
+        r"^\|",
+        r"^\^",
+        r"^<<",
+        r"^>>",
+        r"^!",
+        r"^&&",
+        r"^\|\|",
+        r"^==",
+        r"^!=",
+        r"^<",
+        r"^>",
+        r"^<=",
+        r"^>="
     ];
 
     let token_set = RegexSet::new(token_patterns).unwrap();
@@ -127,6 +163,7 @@ pub fn lexer(path: &String, pd: &PathData) -> Vec<Tokens> {
 
     data = data.trim_start().to_string();
     while !data.is_empty() {
+        //dbg!(&data);
         let (token, longest_match) = match_tokens(&data, &token_set, &regexes);
         tokens.push(token);
         data = String::from(data.strip_prefix(longest_match.as_str()).unwrap());
@@ -157,17 +194,35 @@ fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>) -> (T
     
     let token = 
         match longest_match {
-            "int" => Tokens::Int,
-            "void" => Tokens::Void,
+            "int"    => Tokens::Int,
+            "void"   => Tokens::Void,
             "return" => Tokens::Return,
-            "(" => Tokens::OpenParenthesis,
-            ")" => Tokens::ClosedParenthesis,
-            "{" => Tokens::OpenCurlyBrace,
-            "}" => Tokens::ClosedCurlyBrace,
-            ";" => Tokens::Semicolon,
-            "-" => Tokens::Negation,
-            "--" => Tokens::Decrement,
-            "~" => Tokens::Complement,
+            "("      => Tokens::OpenParenthesis,
+            ")"      => Tokens::ClosedParenthesis,
+            "{"      => Tokens::OpenCurlyBrace,
+            "}"      => Tokens::ClosedCurlyBrace,
+            ";"      => Tokens::Semicolon,
+            "-"      => Tokens::Negation,
+            "--"     => Tokens::Decrement,
+            "~"      => Tokens::Complement,
+            "+"      => Tokens::Add,
+            "*"      => Tokens::Multiply,
+            "/"      => Tokens::Divide,
+            "%"      => Tokens::Remainder,
+            "&"      => Tokens::BitwiseAND,
+            "|"      => Tokens::BitwiseOR,
+            "^"      => Tokens::BitwiseXOR,
+            "<<"     => Tokens::LeftShift,
+            ">>"     => Tokens::RightShift,
+            "!"      => Tokens::LogicalNOT,
+            "&&"     => Tokens::LogicalAND,
+            "||"     => Tokens::LogicalOR,
+            "=="     => Tokens::EqualTo,
+            "!="     => Tokens::NotEqualTo,
+            "<"      => Tokens::LessThan,
+            ">"      => Tokens::GreaterThan,
+            "<="     => Tokens::LessOrEqual,
+            ">="     => Tokens::GreaterOrEqual,
             _ => {
                 let identifier = Regex::new(r"[a-zA-Z_]\w*").unwrap();
                 let constant = Regex::new(r"[0-9]+").unwrap();
@@ -203,6 +258,7 @@ fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>) -> (T
         Tokens::Invalid => panic!("Invalid token."),
         _ => ()
     }
+
     (token, longest_match.to_string())
 }
 
@@ -227,6 +283,24 @@ fn write_lexer_output(pd: &PathData, tokens: &Vec<Tokens>) {
             Tokens::Complement                 => data = String::from("Complement"),
             Tokens::Identifier(id)    => data = String::from("Identifier(\n    \"") + id + "\",\n)",
             Tokens::IntegerConstant(num) => data = String::from("IntegerConstant(\n    ") + num.to_string().as_str() + ",\n)",
+            Tokens::Add                        => data = String::from("Add"),
+            Tokens::Multiply                   => data = String::from("Multiply"),
+            Tokens::Divide                     => data = String::from("Divide"),
+            Tokens::Remainder                  => data = String::from("Remainder"),
+            Tokens::BitwiseAND                 => data = String::from("BitwiseAND"),
+            Tokens::BitwiseOR                  => data = String::from("BitwiseOR"),
+            Tokens::BitwiseXOR                 => data = String::from("BitwiseXOR"),
+            Tokens::LeftShift                  => data = String::from("LeftShift"),
+            Tokens::RightShift                 => data = String::from("RightShift"),
+            Tokens::LogicalNOT                 => data = String::from("LogicalNOT"),
+            Tokens::LogicalAND                 => data = String::from("LogicalAND"),
+            Tokens::LogicalOR                  => data = String::from("LogicalOR"),
+            Tokens::EqualTo                    => data = String::from("EqualTo"),
+            Tokens::NotEqualTo                 => data = String::from("NotEqualTo"),
+            Tokens::LessThan                   => data = String::from("LessThan"),
+            Tokens::GreaterThan                => data = String::from("GreaterThan"),
+            Tokens::LessOrEqual                => data = String::from("LessOrEqual"),
+            Tokens::GreaterOrEqual             => data = String::from("GreaterOrEqual"),
             Tokens::Invalid                    => data = String::from("Invalid Token")
         }
         data += ",\n";

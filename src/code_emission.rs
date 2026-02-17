@@ -16,7 +16,7 @@ fn emission_function(binary_ast: &AssemblyFunctionDefinition) -> String {
         AssemblyFunctionDefinition::AssemblyFunction(name, inst) => {
             let mut str = String::from("\t.globl ") + name + "\n" + name + ":\n";
             str += "\tpushq\t%rbp\n";
-            str += "\tmovq\t%rsp, %rbp\n";
+            str += "\tmovq\t%rsp, %rbp\n\n";
             let inst = emission_instructions(&inst);
             str += &inst;
             str
@@ -42,7 +42,7 @@ fn emission_instructions(binary_ast: &Vec<Instructions>) -> String {
                 data += "\n";
             },
             Instructions::Ret => {
-                data += "\tmovq\t%rbp, %rsp\n";
+                data += "\n\tmovq\t%rbp, %rsp\n";
                 data += "\tpopq\t%rbp\n";
                 data += "\tret\n";
             },
@@ -56,7 +56,23 @@ fn emission_instructions(binary_ast: &Vec<Instructions>) -> String {
                 data += "\tsubq\t$";
                 data += int.to_string().as_str();
                 data += ", %rsp\n";
-            }
+            },
+            Instructions::Binary(binary_operator, src, dst) => {
+                emission_binary_operators(binary_operator, &mut data);
+                let src = emission_operand(src);
+                let dst = emission_operand(dst);
+                data += &src;
+                data += ", ";
+                data += &dst;
+                data += "\n";
+            },
+            Instructions::Idiv(operand) => {
+                let operand = emission_operand(operand);
+                data += "\tidivl\t";
+                data += &operand;
+                data += "\n";
+            },
+            Instructions::Cdq => data += "\tcdq\t\n"
         }
     }
 
@@ -67,6 +83,19 @@ fn emission_unary_operators(unary_operator: &AssemblyUnaryOperator, data: &mut S
     match unary_operator {
         AssemblyUnaryOperator::Neg => *data += "\tnegl\t",
         AssemblyUnaryOperator::Not => *data += "\tnotl\t"
+    }
+}
+
+fn emission_binary_operators(binary_operator: &AssemblyBinaryOperator, data: &mut String) {
+    match binary_operator {
+        AssemblyBinaryOperator::Add             => *data += "\taddl\t",
+        AssemblyBinaryOperator::Mult            => *data += "\timull\t",
+        AssemblyBinaryOperator::Sub             => *data += "\tsubl\t",
+        AssemblyBinaryOperator::BitwiseAND      => *data += "\tandl\t",
+        AssemblyBinaryOperator::BitwiseXOR      => *data += "\txorl\t",
+        AssemblyBinaryOperator::BitwiseOR       => *data += "\torl\t\t",
+        AssemblyBinaryOperator::LeftShift       => *data += "\tsall\t",
+        AssemblyBinaryOperator::RightShift      => *data += "\tsarl\t"
     }
 }
 
@@ -89,7 +118,10 @@ fn emission_operand(binary_ast: &Operand) -> String {
 
 fn emission_registers(register: &Reg) -> String {
     match register {
-        Reg::AX => "%eax".to_string(),
-        Reg::R10 => "%r10d".to_string()
+        Reg::AX   => "%eax".to_string(),
+        Reg::DX   => "%edx".to_string(),
+        Reg::R10  => "%r10d".to_string(),
+        Reg::R11  => "%r11d".to_string(),
+        Reg::CL   => "%cl".to_string()
     }
 }
