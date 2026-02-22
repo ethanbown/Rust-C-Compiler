@@ -61,6 +61,11 @@ use parser_ast::Statement as Statement;
 use parser_ast::Exp as Exp;
 use parser_ast::UnaryOperator as UnaryOperator;
 
+#[cfg(test)]
+mod tests {
+    //use super::Tokens::*;
+}
+
 pub fn parser(tokens: &mut Vec<Tokens>) -> Program {
     tokens.reverse();
     let ast = parse_program(tokens);

@@ -31,8 +31,8 @@ fn emission_instructions(binary_ast: &Vec<Instructions>) -> String {
     for inst in binary_ast {
         match inst {
             Instructions::Mov(src, dst) => {
-                let src = emission_operand(&src);
-                let dst = emission_operand(&dst);
+                let src = emission_operand(&src, false);
+                let dst = emission_operand(&dst, false);
                 //data += "\n\n\t# returning ";
                 //data += &src;
                 data += "\tmovl\t";
@@ -48,7 +48,7 @@ fn emission_instructions(binary_ast: &Vec<Instructions>) -> String {
             },
             Instructions::Unary(unary_operator, operand) => {
                 emission_unary_operators(unary_operator, &mut data);
-                let operand = emission_operand(operand);
+                let operand = emission_operand(operand, false);
                 data += &operand;
                 data += "\n";
             },
@@ -59,20 +59,56 @@ fn emission_instructions(binary_ast: &Vec<Instructions>) -> String {
             },
             Instructions::Binary(binary_operator, src, dst) => {
                 emission_binary_operators(binary_operator, &mut data);
-                let src = emission_operand(src);
-                let dst = emission_operand(dst);
+                let src = emission_operand(src, false);
+                let dst = emission_operand(dst, false);
                 data += &src;
                 data += ", ";
                 data += &dst;
                 data += "\n";
             },
             Instructions::Idiv(operand) => {
-                let operand = emission_operand(operand);
+                let operand = emission_operand(operand, false);
                 data += "\tidivl\t";
                 data += &operand;
                 data += "\n";
             },
-            Instructions::Cdq => data += "\tcdq\t\n"
+            Instructions::Cdq => data += "\tcdq\t\n",
+            Instructions::Cmp(op1, op2) => {
+                let op1 = emission_operand(op1, false);
+                let op2 = emission_operand(op2, false);
+                data += "\tcmpl\t";
+                data += &op1;
+                data += ", ";
+                data += &op2;
+                data += "\n";
+            }
+            Instructions::Jmp(label) => {
+                data += "\tjmp\t.L";
+                data += &label;
+                data += "\n";
+            },
+            Instructions::JmpCC(cond_code, label) => {
+                let cond_code = emission_condition_code(cond_code);
+                data += "\tj";
+                data += &cond_code;
+                data += "\t.L";
+                data += &label;
+                data += "\n";
+            }
+            Instructions::SetCC(cond_code, operand) => {
+                let operand = emission_operand(operand, true);
+                let cond_code = emission_condition_code(cond_code);
+                data += "\tset";
+                data += &cond_code;
+                data += "\t";
+                data += &operand;
+                data += "\n";
+            },
+            Instructions::Label(label) => {
+                data += ".L";
+                data += &label;
+                data += ":\n";
+            }
         }
     }
 
@@ -99,13 +135,18 @@ fn emission_binary_operators(binary_operator: &AssemblyBinaryOperator, data: &mu
     }
 }
 
-fn emission_operand(binary_ast: &Operand) -> String {
+fn emission_operand(binary_ast: &Operand, is_setcc: bool) -> String {
     let data = match binary_ast {
         Operand::Imm(num) => {
             "$".to_string() + num.to_string().as_str()
         },
         Operand::Reg(register) => {
-            emission_registers(register)
+            if is_setcc {
+                emission_lower_registers(register)
+            }           
+            else {
+                emission_registers(register)
+            }
         },
         Operand::Stack(int) => {
             int.to_string() + "(%rbp)"
@@ -123,5 +164,26 @@ fn emission_registers(register: &Reg) -> String {
         Reg::R10  => "%r10d".to_string(),
         Reg::R11  => "%r11d".to_string(),
         Reg::CL   => "%cl".to_string()
+    }
+}
+
+fn emission_lower_registers(register: &Reg) -> String {
+    match register {
+        Reg::AX   => "%al".to_string(),
+        Reg::DX   => "%dl".to_string(),
+        Reg::R10  => "%r10b".to_string(),
+        Reg::R11  => "%r11b".to_string(),
+        Reg::CL   => "%cl".to_string()
+    }
+}
+
+fn emission_condition_code(cond_code: &ConditionCode) -> String {
+    match cond_code {
+        ConditionCode::E   => "e".to_string(),
+        ConditionCode::NE  => "ne".to_string(),
+        ConditionCode::G   => "g".to_string(),
+        ConditionCode::GE  => "ge".to_string(),
+        ConditionCode::L   => "l".to_string(),
+        ConditionCode::LE  => "le".to_string(),
     }
 }

@@ -1,4 +1,5 @@
 use crate::assembly::assembly_ast::AssemblyBinaryOperator;
+use crate::assembly::assembly_ast::ConditionCode;
 use crate::tacky::tacky_ast::*;
 use std::collections::HashMap;
 
@@ -20,8 +21,13 @@ pub mod assembly_ast {
         Mov(Operand, Operand),
         Unary(AssemblyUnaryOperator, Operand),
         Binary(AssemblyBinaryOperator, Operand, Operand),
+        Cmp(Operand, Operand),
         Idiv(Operand),
         Cdq,
+        Jmp(String),
+        JmpCC(ConditionCode, String),
+        SetCC(ConditionCode, Operand),
+        Label(String),
         AllocateStack(i32),
         Ret
     }
@@ -60,6 +66,16 @@ pub mod assembly_ast {
         CL,
         R10,
         R11
+    }
+
+    #[derive(Debug, Clone)]
+    pub enum ConditionCode {
+        E,
+        NE,
+        G,
+        GE,
+        L,
+        LE
     }
 }
 
@@ -112,10 +128,14 @@ fn assembly_parse_instructions(tacky_ast: &Vec<IRInstructions>) -> Vec<Instructi
             IRInstructions::Unary(unary_operator, src, dst) => {
                 let src = assembly_parse_val(src);
                 let dst = assembly_parse_val(dst);
-                let unary_operator = assembly_parse_unary_operator(unary_operator);
-                let dst_copy = dst.clone();
-                return_val.push(Instructions::Mov(src, dst));
-                return_val.push(Instructions::Unary(unary_operator, dst_copy));
+                if is_logical_not(unary_operator) {
+                    assembly_relational_instructions(ConditionCode::E, &mut return_val, src, Operand::Imm(0), dst);
+                } else {
+                    let unary_operator = assembly_parse_unary_operator(unary_operator);
+                    let dst_copy = dst.clone();
+                    return_val.push(Instructions::Mov(src, dst));
+                    return_val.push(Instructions::Unary(unary_operator, dst_copy));
+                }
             }
             IRInstructions::Binary(binary_operator,src1 ,src2 ,dst ) => {
                 let src1 = assembly_parse_val(src1);
@@ -134,6 +154,12 @@ fn assembly_parse_instructions(tacky_ast: &Vec<IRInstructions>) -> Vec<Instructi
                         return_val.push(Instructions::Idiv(src2));
                         return_val.push(Instructions::Mov(Operand::Reg(Reg::DX), dst));
                     },
+                    IRBinaryOperator::GreaterThan    => assembly_relational_instructions(ConditionCode::G, &mut return_val, src1, src2, dst),
+                    IRBinaryOperator::GreaterOrEqual => assembly_relational_instructions(ConditionCode::GE, &mut return_val, src1, src2, dst),
+                    IRBinaryOperator::LessThan       => assembly_relational_instructions(ConditionCode::L, &mut return_val, src1, src2, dst),
+                    IRBinaryOperator::LessOrEqual    => assembly_relational_instructions(ConditionCode::LE, &mut return_val, src1, src2, dst),
+                    IRBinaryOperator::EqualTo        => assembly_relational_instructions(ConditionCode::E, &mut return_val, src1, src2, dst),
+                    IRBinaryOperator::NotEqualTo     => assembly_relational_instructions(ConditionCode::NE, &mut return_val, src1, src2, dst),
                     _ => {
                         let binary_operator = assembly_parse_binary_operator(binary_operator);
                         let dst_copy = dst.clone();
@@ -142,7 +168,23 @@ fn assembly_parse_instructions(tacky_ast: &Vec<IRInstructions>) -> Vec<Instructi
                     }
                 }
             }
-            _ => todo!()
+            IRInstructions::Copy(src, dst) => {
+                let src = assembly_parse_val(src);
+                let dst = assembly_parse_val(dst);
+                return_val.push(Instructions::Mov(src, dst));
+            },
+            IRInstructions::Jump(identifier) => return_val.push(Instructions::Jmp(identifier.clone())),
+            IRInstructions::JumpIfZero(val, target) => {
+                let val = assembly_parse_val(val);
+                return_val.push(Instructions::Cmp(Operand::Imm(0), val));
+                return_val.push(Instructions::JmpCC(ConditionCode::E, target.clone()));
+            },
+            IRInstructions::JumpIfNotZero(val, target) => {
+                let val = assembly_parse_val(val);
+                return_val.push(Instructions::Cmp(Operand::Imm(0), val));
+                return_val.push(Instructions::JmpCC(ConditionCode::NE, target.clone()));
+            },
+            IRInstructions::Label(identifier) => return_val.push(Instructions::Label(identifier.clone()))
         }
     }
 
@@ -161,7 +203,14 @@ fn assembly_parse_unary_operator(tacky_ast: &IRUnaryOperator) -> AssemblyUnaryOp
     match tacky_ast {
         IRUnaryOperator::Complement => AssemblyUnaryOperator::Not,
         IRUnaryOperator::Negate => AssemblyUnaryOperator::Neg,
-        IRUnaryOperator::LogicalNot => AssemblyUnaryOperator::Not
+        IRUnaryOperator::LogicalNot => panic!("should not parse in assembly a '!' token")
+    }
+}
+
+fn is_logical_not(tacky_ast: &IRUnaryOperator) -> bool {
+    match tacky_ast {
+        IRUnaryOperator::LogicalNot => true,
+        _ => false
     }
 }
 
@@ -177,6 +226,12 @@ fn assembly_parse_binary_operator(tacky_ast: &IRBinaryOperator) -> AssemblyBinar
         IRBinaryOperator::RightShift    => AssemblyBinaryOperator::RightShift,
         _ => panic!("Invalid binary operator")
     }
+}
+
+fn assembly_relational_instructions(cond: ConditionCode, return_val: &mut Vec<Instructions>, src1: Operand, src2: Operand, dst: Operand) {
+    return_val.push(Instructions::Cmp(src2.clone(), src1.clone()));
+    return_val.push(Instructions::Mov(Operand::Imm(0), dst.clone()));
+    return_val.push(Instructions::SetCC(cond, dst.clone()));
 }
 
 fn replace_pseudo_operands(binary_ast: &mut AssemblyProgram) -> i32{
@@ -201,17 +256,25 @@ fn pseudo_parse_function(binary_ast: &mut AssemblyFunctionDefinition, identifier
 fn pseudo_parse_instructions(binary_ast: &mut Vec<Instructions>, identifiers_to_offsets: &mut HashMap<String, i32>, stack_offset: &mut i32) {
     for instruction in &mut *binary_ast {
         match instruction {
-            Instructions::Unary(_, operand) => pesudo_parse_operand(operand, identifiers_to_offsets, stack_offset),
             Instructions::Mov(src,dst ) => {
                 pesudo_parse_operand(src, identifiers_to_offsets, stack_offset);
                 pesudo_parse_operand(dst, identifiers_to_offsets, stack_offset);
-            }
+            },
+            Instructions::Unary(_, operand) => pesudo_parse_operand(operand, identifiers_to_offsets, stack_offset),
             Instructions::Binary(_, op1, op2 ) => {
+                pesudo_parse_operand(op1, identifiers_to_offsets, stack_offset);
+                pesudo_parse_operand(op2, identifiers_to_offsets, stack_offset);
+            },
+            Instructions::Cmp(op1, op2) => {
                 pesudo_parse_operand(op1, identifiers_to_offsets, stack_offset);
                 pesudo_parse_operand(op2, identifiers_to_offsets, stack_offset);
             },
             Instructions::Idiv(operand) => pesudo_parse_operand(operand, identifiers_to_offsets, stack_offset),
             Instructions::Cdq => (),
+            Instructions::Jmp(_) => (),
+            Instructions::JmpCC(_, _) => (),
+            Instructions::SetCC(_, op) => pesudo_parse_operand(op, identifiers_to_offsets, stack_offset),
+            Instructions::Label(_) => (),
             Instructions::AllocateStack(_) => (),
             Instructions::Ret => (),
         }
@@ -306,7 +369,18 @@ fn fixing_parse_instructions(binary_ast: &mut Vec<Instructions>, stack_offset: i
                         }
                     }
                 }
-            }
+            },
+            Instructions::Cmp(src, dst) => {
+                if are_both_memory_addresses(src, dst) {
+                    new_instructions.push(Instructions::Mov(src.clone(), Operand::Reg(Reg::R10)));
+                    new_instructions.push(Instructions::Cmp(Operand::Reg(Reg::R10), dst.clone()));
+                } else if is_constant(dst) {
+                    new_instructions.push(Instructions::Mov(dst.clone(), Operand::Reg(Reg::R11)));
+                    new_instructions.push(Instructions::Cmp(src.clone(), Operand::Reg(Reg::R11)));
+                } else {
+                    new_instructions.push(instruction.clone());
+                }
+            },
             _ => new_instructions.push(instruction.clone())
         }
     }

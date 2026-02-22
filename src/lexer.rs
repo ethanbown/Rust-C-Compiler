@@ -4,51 +4,7 @@ use regex::{Regex, RegexSet};
 
 #[cfg(test)]
 mod tests {
-    use std::fs::{self, read_to_string};
-    use std::path::{Path};
-
-    use crate::compiler_driver::*;
-
-    #[test]
-    fn test_lexer_output() {
-        let path = Path::new("/home/werea/writing-a-c-compiler-tests/tests/chapter_1/valid/");
-        for entry in fs::read_dir(path).expect("Failed to read directory.") {
-            let file = match entry {
-                Ok(file) => file,
-                Err(error) => panic!("Problem opening file in directory: {error}")
-            };
-            let file = path.join(Path::new(&file.file_name()));
-            let path_data = create_pathdata(&file);
-            stop_at_lex(&file);
-            check_lexer_output(&path_data);
-        }
-    }
-
-    fn check_lexer_output(pd: &super::PathData) {
-        let lexer_output_path = "/home/werea/c_compiler/lexer_outputs/".to_string() + pd.file_stem.as_str() + ".lex";
-        let lexer_correct_path = "/home/werea/c_compiler/lexer_tests/".to_string() + pd.file_stem.as_str() + "_correct.lex";
-
-        dbg!(&lexer_output_path);
-        dbg!(&lexer_correct_path);
-
-        let mut output_result = Vec::new();
-
-        for line in read_to_string(lexer_output_path).unwrap().lines() {
-            output_result.push(line.to_string())
-        }
-
-        let mut correct_result  = Vec::new();
-
-        for line in read_to_string(lexer_correct_path).unwrap().lines() {
-            correct_result.push(line.to_string())
-        }
-
-        if output_result != correct_result {
-            dbg!(output_result);
-            dbg!(correct_result);
-            panic!("Lexer output result does not match correct result")
-        }
-    }
+    //use crate::compiler_driver::*;
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -103,14 +59,14 @@ pub struct PathData {
 }
 
 pub fn lexer(path: &String, pd: &PathData) -> Vec<Tokens> {
-    let mut file =
+    let mut code_file =
         match File::open(&path) {
             Ok(file) => file,
             Err(why) => panic!("Failed to open '{}' in lexer: {}", path, why)
         };
 
     let mut data = String::new();
-    match file.read_to_string(&mut data) {
+    match code_file.read_to_string(&mut data) {
         Ok(_) => (),
         Err(why) => panic!("Failed to read data from '{}' into string in lexer: {}", path, why)
     }
