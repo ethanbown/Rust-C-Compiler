@@ -1,4 +1,4 @@
-use std::{io::{Read, Write},
+use std::{io::{Read},
           fs::{File}};
 use regex::{Regex, RegexSet};
 
@@ -25,11 +25,14 @@ pub enum Tokens {
     Return,
     Void,
 
-    // Operators
-    Complement,
+    // Unary Operators
     Negation,
-    Decrement,
+    Complement,
     LogicalNOT,
+    Increment,
+    Decrement,
+
+    // Binary Operators
     Add,
     Multiply,
     Divide,
@@ -49,6 +52,18 @@ pub enum Tokens {
     GreaterOrEqual,
     Assignment,
 
+    // Compound Assignment Operators
+    AddAssign,
+    SubtractAssign,
+    MultiplyAssign,
+    DivideAssign,
+    RemainderAssign,
+    BitwiseANDAssign,
+    BitwiseORAssign,
+    BitwiseXORAssign,
+    LeftShiftAssign,
+    RightShiftAssign,
+
     // Other
     Invalid
 }
@@ -59,15 +74,16 @@ pub struct PathData {
     pub file_path: String
 }
 
-pub fn lexer(path: &String, _pd: &PathData) -> Vec<Tokens> {
+/// Invokes lexer and returns a vector of tokens to parse.
+pub fn lexer(path: &String) -> Vec<Tokens> {
     let mut code_file =
         match File::open(&path) {
             Ok(file) => file,
-            Err(why) => panic!("Failed to open '{}' in lexer: {}", path, why)
+            Err(why) => panic!("rcc: failed to open '{}' in lexer: {}", path, why)
         };
 
-    let mut data = String::new();
-    match code_file.read_to_string(&mut data) {
+    let mut code_data = String::new();
+    match code_file.read_to_string(&mut code_data) {
         Ok(_) => (),
         Err(why) => panic!("Failed to read data from '{}' into string in lexer: {}", path, why)
     }
@@ -84,7 +100,6 @@ pub fn lexer(path: &String, _pd: &PathData) -> Vec<Tokens> {
         r"^\}",
         r"^;",
         r"^-",
-        r"^--",
         r"^~",
         r"^\+",
         r"^\*",
@@ -105,6 +120,18 @@ pub fn lexer(path: &String, _pd: &PathData) -> Vec<Tokens> {
         r"^<=",
         r"^>=",
         r"^=",
+        r"^--",
+        r"^\+\+",
+        r"^\+=",
+        r"^-=",
+        r"^\*=",
+        r"^/=",
+        r"^%=",
+        r"^&=",
+        r"^\|=",
+        r"^\^=",
+        r"^<<=",
+        r"^>>="
     ];
 
     let token_set = RegexSet::new(token_patterns).unwrap();
@@ -119,26 +146,29 @@ pub fn lexer(path: &String, _pd: &PathData) -> Vec<Tokens> {
     // Collect tokens to return
     let mut tokens: Vec<Tokens> = Vec::new();
 
-    data = data.trim_start().to_string();
-    while !data.is_empty() {
-        //dbg!(&data);
-        let (token, longest_match) = match_tokens(&data, &token_set, &regexes);
-        tokens.push(token);
-        data = String::from(data.strip_prefix(longest_match.as_str()).unwrap());
-        data = data.trim_start().to_string();
-    }
+    code_data = code_data.trim_start().to_string();
 
-    //write_lexer_output(pd, &tokens);
+    // Always grab token at beginning of string that has longest match,
+    // make sure there is no leading whitespace
+    while !code_data.is_empty() {
+        //dbg!(&code_data);
+
+        let (token, longest_match) = match_tokens(&code_data, &token_set, &regexes);
+        tokens.push(token);
+        code_data = String::from(code_data.strip_prefix(longest_match.as_str()).unwrap());
+        code_data = code_data.trim_start().to_string();
+    }
 
     //dbg!(&tokens);
 
     tokens
 }
 
+/// Returns the longest token matched.
 fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>) -> (Tokens, String)  {
     let data_str = data.as_str();
 
-    // And then scan again to collect matches
+    // Scan again to collect matches
     let matches: Vec<&str> = token_set
         .matches(data_str)
         .into_iter()
@@ -153,8 +183,7 @@ fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>) -> (T
         }
     }
     
-    let token = 
-        match longest_match {
+    let token = match longest_match {
             "int"    => Tokens::Int,
             "void"   => Tokens::Void,
             "return" => Tokens::Return,
@@ -164,7 +193,6 @@ fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>) -> (T
             "}"      => Tokens::ClosedCurlyBrace,
             ";"      => Tokens::Semicolon,
             "-"      => Tokens::Negation,
-            "--"     => Tokens::Decrement,
             "~"      => Tokens::Complement,
             "+"      => Tokens::Add,
             "*"      => Tokens::Multiply,
@@ -185,88 +213,52 @@ fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>) -> (T
             "<="     => Tokens::LessOrEqual,
             ">="     => Tokens::GreaterOrEqual,
             "="      => Tokens::Assignment,
-            _ => {
-                let identifier = Regex::new(r"[a-zA-Z_]\w*").unwrap();
-                let constant = Regex::new(r"[0-9]+").unwrap();
-                let t;
-
-                let is_identifier = 
-                    match identifier.find(longest_match) {
-                        Some(id) => !id.is_empty(),
-                        None => false
-                    };
-
-                let is_constant = 
-                    match constant.find(longest_match) {
-                        Some(cons) => !cons.is_empty(),
-                        None => false
-                    };
-                
-                if is_identifier {
-                    t = Tokens::Identifier(String::from(longest_match));
-                }
-                else if is_constant {
-                    t = Tokens::IntegerConstant(longest_match.parse().expect("Failed to transform constant into i32."))
-                }
-                else {
-                    t = Tokens::Invalid
-                }
-                t
-            }
+            "--"     => Tokens::Decrement,
+            "++"     => Tokens::Increment,
+            "+="     => Tokens::AddAssign,
+            "-="     => Tokens::SubtractAssign,
+            "*="     => Tokens::MultiplyAssign,
+            "/="     => Tokens::DivideAssign,
+            "%="     => Tokens::RemainderAssign,
+            "&="     => Tokens::BitwiseANDAssign,
+            "|="     => Tokens::BitwiseORAssign,
+            "^="     => Tokens::BitwiseXORAssign,
+            "<<="    => Tokens::LeftShiftAssign,
+            ">>="    => Tokens::RightShiftAssign,
+            _        => match_identifier_or_constant(longest_match)
         };
     
-
     match token {
         Tokens::Invalid => panic!("Invalid token."),
-        _ => ()
+        _               => (token, longest_match.to_string())
     }
-
-    (token, longest_match.to_string())
 }
 
-fn _write_lexer_output(pd: &PathData, tokens: &Vec<Tokens>) {
-    let lexer_output_path = "/home/werea/c_compiler/lexer_outputs/".to_string() + pd.file_stem.as_str() + ".lex";
+/// Matches either an identifier or constant, or returns invalid.
+fn match_identifier_or_constant(longest_match: &str) -> Tokens {
+    if is_identifier(longest_match) {
+        Tokens::Identifier(String::from(longest_match))
+    }
+    else if is_constant(longest_match) {
+        Tokens::IntegerConstant(longest_match.parse().expect("rcc: failed to transform constant into i32."))
+    }
+    else {
+        Tokens::Invalid
+    }
+}
 
-    let mut lexer_output_file = File::create(lexer_output_path).expect("Failed to create lexer file.");
+fn is_identifier(longest_match: &str) -> bool {
+    let identifier = Regex::new(r"[a-zA-Z_]\w*").unwrap();
+    match identifier.find(longest_match) {
+        Some(id) => !id.is_empty(),
+        None => false
+    }
+}
 
-    for token in tokens {
-        let mut data;
-        match token {
-            Tokens::Int                        => data = String::from("Int"),
-            Tokens::Void                       => data = String::from("Void"),
-            Tokens::Return                     => data = String::from("Return"),
-            Tokens::Semicolon                  => data = String::from("Semicolon"),
-            Tokens::OpenCurlyBrace             => data = String::from("OpenCurlyBrace"),
-            Tokens::ClosedCurlyBrace           => data = String::from("ClosedCurlyBrace"),
-            Tokens::OpenParenthesis            => data = String::from("OpenParenthesis"),
-            Tokens::ClosedParenthesis          => data = String::from("ClosedParenthesis"),
-            Tokens::Decrement                  => data = String::from("Decrement"),
-            Tokens::Negation                   => data = String::from("Negation"),
-            Tokens::Complement                 => data = String::from("Complement"),
-            Tokens::Identifier(id)    => data = String::from("Identifier(\n    \"") + id + "\",\n)",
-            Tokens::IntegerConstant(num) => data = String::from("IntegerConstant(\n    ") + num.to_string().as_str() + ",\n)",
-            Tokens::Add                        => data = String::from("Add"),
-            Tokens::Multiply                   => data = String::from("Multiply"),
-            Tokens::Divide                     => data = String::from("Divide"),
-            Tokens::Remainder                  => data = String::from("Remainder"),
-            Tokens::BitwiseAND                 => data = String::from("BitwiseAND"),
-            Tokens::BitwiseOR                  => data = String::from("BitwiseOR"),
-            Tokens::BitwiseXOR                 => data = String::from("BitwiseXOR"),
-            Tokens::LeftShift                  => data = String::from("LeftShift"),
-            Tokens::RightShift                 => data = String::from("RightShift"),
-            Tokens::LogicalNOT                 => data = String::from("LogicalNOT"),
-            Tokens::LogicalAND                 => data = String::from("LogicalAND"),
-            Tokens::LogicalOR                  => data = String::from("LogicalOR"),
-            Tokens::EqualTo                    => data = String::from("EqualTo"),
-            Tokens::NotEqualTo                 => data = String::from("NotEqualTo"),
-            Tokens::LessThan                   => data = String::from("LessThan"),
-            Tokens::GreaterThan                => data = String::from("GreaterThan"),
-            Tokens::LessOrEqual                => data = String::from("LessOrEqual"),
-            Tokens::GreaterOrEqual             => data = String::from("GreaterOrEqual"),
-            Tokens::Assignment                 => data = String::from("Assignment"),
-            Tokens::Invalid                    => data = String::from("Invalid Token")
-        }
-        data += ",\n";
-        lexer_output_file.write(data.as_bytes()).expect("Failed to write to lexer output file");
+fn is_constant(longest_match: &str) -> bool {
+    let constant = Regex::new(r"[0-9]+").unwrap();
+    match constant.find(longest_match) {
+        Some(cons) => !cons.is_empty(),
+        None => false
     }
 }

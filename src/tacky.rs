@@ -80,7 +80,7 @@ use tacky_ast::Val as Val;
 pub fn tacky(ast: &Program, counter: &mut UniqueCounter) -> IRProgram {
     let tacky_ast = ir_parse_program(&ast, counter);
 
-    dbg!(&tacky_ast);
+    //dbg!(&tacky_ast);
 
     tacky_ast
 }
@@ -119,9 +119,6 @@ fn ir_parse_declaration(decl: &Declaration, instructions: &mut Vec<IRInstruction
         Declaration::Declaration(name, init) => {
             if init.is_some() {
                 let copy = init.clone();
-                let copy2 = init.clone();
-
-                dbg!(&copy2.unwrap());
 
                 let return_val = emit_tacky(&copy.unwrap(), instructions, counter, name);
                 instructions.push(IRInstructions::Copy(return_val, Val::Var(name.clone())));

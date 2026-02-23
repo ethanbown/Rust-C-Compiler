@@ -34,6 +34,7 @@ pub mod parser_ast {
         Constant(i32),
         Var(Identifier),
         Unary(UnaryOperator, Box<Exp>),
+        
         Binary(BinaryOperator, Box<Exp>, Box<Exp>),
         Assignment(Box<Exp>, Box<Exp>)
     }
@@ -87,6 +88,7 @@ mod tests {
     //use super::Tokens::*;
 }
 
+/// Invokes parser and returns AST of program.
 pub fn parser(tokens: &mut Vec<Tokens>) -> Program {
     tokens.reverse();
     let ast = parse_program(tokens);
@@ -94,15 +96,17 @@ pub fn parser(tokens: &mut Vec<Tokens>) -> Program {
         panic!("more than just a main function");
     }
 
-    dbg!(&ast);
+    //dbg!(&ast);
 
     ast
 }
 
+/// Parse entire program.
 fn parse_program(tokens: &mut Vec<Tokens>) -> Program {
     Program::Program(parse_function(tokens))
 }
 
+/// Parse function and function body.
 fn parse_function(tokens: &mut Vec<Tokens>) -> FunctionDefinition {
     expected_token(Tokens::Int, tokens);
     let name = parse_identifier(tokens);
@@ -112,6 +116,7 @@ fn parse_function(tokens: &mut Vec<Tokens>) -> FunctionDefinition {
     expected_token(Tokens::OpenCurlyBrace, tokens);
     let mut function_body: Vec<BlockItem> = Vec::new();
     
+    // Goes through every line inside function body
     while peek(tokens) != Tokens::ClosedCurlyBrace {
         let next_block_item = parse_block_item(tokens);
         function_body.push(next_block_item);
@@ -121,6 +126,7 @@ fn parse_function(tokens: &mut Vec<Tokens>) -> FunctionDefinition {
     FunctionDefinition::Function(name, function_body)
 }
 
+/// Parse identifier and return string name.
 fn parse_identifier(tokens: &mut Vec<Tokens>) -> String {
     let val = take_token(tokens);
     let val = match val {
@@ -130,6 +136,9 @@ fn parse_identifier(tokens: &mut Vec<Tokens>) -> String {
     val
 }
 
+/// Decides whether to parse declaration or statement based on if the next token is an "int" keyword.
+/// 
+/// Treated as a declaration if next token is so, otherwise as a statement.
 fn parse_block_item(tokens: &mut Vec<Tokens>) -> BlockItem {
     if peek(tokens) == Tokens::Int {
         let decl = parse_declaration(tokens);
@@ -140,6 +149,7 @@ fn parse_block_item(tokens: &mut Vec<Tokens>) -> BlockItem {
     }
 }
 
+/// Parses return, expression, and null statements.
 fn parse_statement(tokens: &mut Vec<Tokens>) -> Statement {
     let next_token = peek(tokens);
     if next_token == Tokens::Return {
@@ -157,6 +167,7 @@ fn parse_statement(tokens: &mut Vec<Tokens>) -> Statement {
     }
 }
 
+/// Parses declaration; can optionally include initialization expression.
 fn parse_declaration(tokens: &mut Vec<Tokens>) -> Declaration {
     expected_token(Tokens::Int, tokens);
     let identifier = parse_identifier(tokens);
@@ -171,6 +182,7 @@ fn parse_declaration(tokens: &mut Vec<Tokens>) -> Declaration {
     }
 }
 
+///
 fn parse_exp(tokens: &mut Vec<Tokens>, min_prec: i32) -> Exp {
     let mut left = parse_factor(tokens);
     let mut next_token = peek(tokens);
@@ -179,6 +191,10 @@ fn parse_exp(tokens: &mut Vec<Tokens>, min_prec: i32) -> Exp {
             take_token(tokens);
             let right = parse_exp(tokens, precedence(&next_token));
             left = Exp::Assignment(Box::new(left), Box::new(right));
+        } else if is_compound_assignment(&next_token) {
+            let operator = parse_binop(tokens);
+            let right = parse_exp(tokens, precedence(&next_token));
+            left = Exp::Assignment(Box::new(left.clone()), Box::new(Exp::Binary(operator, Box::new(left), Box::new(right))));
         } else {
             let operator = parse_binop(tokens);
             let right = parse_exp(tokens, precedence(&next_token) + 1);
@@ -197,12 +213,34 @@ fn parse_factor(tokens: &mut Vec<Tokens>) -> Exp {
     }
     else if is_identifier(&next_token) {
         let identifier = parse_identifier(tokens);
-        Exp::Var(identifier)
+        let next_token = check_for_postfix_operator(tokens);
+        if is_increment_or_decrement(&next_token) {
+            if next_token == Tokens::Increment {
+                let assign = Exp::Assignment(Box::new(Exp::Var(identifier.clone())), Box::new(Exp::Binary(BinaryOperator::Add, Box::new(Exp::Var(identifier.clone())), Box::new(Exp::Constant(1)))));
+                Exp::Binary(BinaryOperator::Subtract, Box::new(assign), Box::new(Exp::Constant(1)))
+                
+            } else {
+                let assign = Exp::Assignment(Box::new(Exp::Var(identifier.clone())), Box::new(Exp::Binary(BinaryOperator::Subtract, Box::new(Exp::Var(identifier.clone())), Box::new(Exp::Constant(1)))));
+                Exp::Binary(BinaryOperator::Add, Box::new(assign), Box::new(Exp::Constant(1)))
+            }
+        } else {
+            Exp::Var(identifier)
+        }
     }
-    else if next_token == Tokens::Complement || next_token == Tokens::Negation || next_token == Tokens::LogicalNOT {
-        let operator = parse_unop(tokens);
-        let inner_exp = parse_factor(tokens);
-        return Exp::Unary(operator, Box::new(inner_exp))
+    else if is_unop(&next_token) {
+        if is_increment_or_decrement(&next_token) {
+            take_token(tokens);
+            let inner_exp = parse_factor(tokens);
+            if next_token == Tokens::Increment {
+                Exp::Assignment(Box::new(inner_exp.clone()), Box::new(Exp::Binary(BinaryOperator::Add, Box::new(inner_exp), Box::new(Exp::Constant(1)))))
+            } else {
+                Exp::Assignment(Box::new(inner_exp.clone()), Box::new(Exp::Binary(BinaryOperator::Subtract, Box::new(inner_exp), Box::new(Exp::Constant(1)))))
+            }
+        } else {
+            let operator = parse_unop(tokens);
+            let inner_exp = parse_factor(tokens);
+            Exp::Unary(operator, Box::new(inner_exp))
+        }
     } else if next_token == Tokens::OpenParenthesis {
         take_token(tokens);
         let inner_exp = parse_exp(tokens, 0);
@@ -236,16 +274,26 @@ fn parse_unop(tokens: &mut Vec<Tokens>) -> UnaryOperator {
 fn parse_binop(tokens: &mut Vec<Tokens>) -> BinaryOperator {
     let token = take_token(tokens);
     match token {
-        Tokens::Add            => BinaryOperator::Add,
-        Tokens::Negation       => BinaryOperator::Subtract,
-        Tokens::Multiply       => BinaryOperator::Multiply,
-        Tokens::Divide         => BinaryOperator::Divide,
-        Tokens::Remainder      => BinaryOperator::Remainder,
-        Tokens::BitwiseAND     => BinaryOperator::BitwiseAND,
-        Tokens::BitwiseXOR     => BinaryOperator::BitwiseXOR,
-        Tokens::BitwiseOR      => BinaryOperator::BitwiseOR,
-        Tokens::LeftShift      => BinaryOperator::LeftShift,
-        Tokens::RightShift     => BinaryOperator::RightShift,
+        Tokens::Add            
+        | Tokens::AddAssign           => BinaryOperator::Add,
+        Tokens::Negation 
+        | Tokens::SubtractAssign      => BinaryOperator::Subtract,
+        Tokens::Multiply
+        | Tokens::MultiplyAssign      => BinaryOperator::Multiply,
+        Tokens::Divide         
+        | Tokens::DivideAssign        => BinaryOperator::Divide,
+        Tokens::Remainder     
+        | Tokens::RemainderAssign     => BinaryOperator::Remainder,
+        Tokens::BitwiseAND     
+        | Tokens::BitwiseANDAssign    => BinaryOperator::BitwiseAND,
+        Tokens::BitwiseOR      
+        | Tokens::BitwiseORAssign     => BinaryOperator::BitwiseOR,
+        Tokens::BitwiseXOR     
+        | Tokens::BitwiseXORAssign    => BinaryOperator::BitwiseXOR,
+        Tokens::LeftShift      
+        | Tokens::LeftShiftAssign     => BinaryOperator::LeftShift,
+        Tokens::RightShift     
+        | Tokens::RightShiftAssign    => BinaryOperator::RightShift,
         Tokens::LogicalAND     => BinaryOperator::LogicalAND,
         Tokens::LogicalOR      => BinaryOperator::LogicalOR,
         Tokens::EqualTo        => BinaryOperator::EqualTo,
@@ -258,6 +306,22 @@ fn parse_binop(tokens: &mut Vec<Tokens>) -> BinaryOperator {
     }
 }
 
+fn is_compound_assignment(token: &Tokens) -> bool {
+    match token {
+        Tokens::AddAssign
+        | Tokens::SubtractAssign
+        | Tokens::MultiplyAssign
+        | Tokens::DivideAssign
+        | Tokens::RemainderAssign
+        | Tokens::BitwiseANDAssign
+        | Tokens::BitwiseORAssign
+        | Tokens::BitwiseXORAssign
+        | Tokens::LeftShiftAssign
+        | Tokens::RightShiftAssign => true,
+        _                 => false
+    }
+}
+
 fn expected_token(expected: Tokens, tokens: &mut Vec<Tokens>) {
     let actual = take_token(tokens);
     if actual != expected {
@@ -265,6 +329,7 @@ fn expected_token(expected: Tokens, tokens: &mut Vec<Tokens>) {
     }
 }
 
+/// Removes and returns token at the end of Vec\<Tokens\>.
 fn take_token(tokens: &mut Vec<Tokens>) -> Tokens {
     let token = tokens.pop();
     let token = match token {
@@ -294,6 +359,48 @@ fn is_int(token: &Tokens) -> bool {
     }
 }
 
+fn is_unop(token: &Tokens) -> bool {
+    match token {
+        Tokens::Negation
+        | Tokens::Complement
+        | Tokens::LogicalNOT
+        | Tokens::Increment
+        | Tokens::Decrement => true,
+        _ => false
+    }
+}
+
+fn is_increment_or_decrement(token: &Tokens) -> bool {
+    match token {
+        Tokens::Increment
+        | Tokens::Decrement => true,
+        _ => false
+    }
+}
+
+fn check_for_postfix_operator(tokens: &mut Vec<Tokens>) -> Tokens {
+    let mut next_token = take_token(tokens);
+    let mut number_of_closed_parenthesis = 0;
+
+    while next_token == Tokens::ClosedParenthesis {
+        number_of_closed_parenthesis += 1;
+        next_token = take_token(tokens);
+    }
+
+    let return_val = next_token.clone();
+
+    if next_token != Tokens::Increment && next_token != Tokens::Decrement {
+        tokens.push(next_token.clone());
+    }
+
+    while number_of_closed_parenthesis > 0 {
+        tokens.push(Tokens::ClosedParenthesis);
+        number_of_closed_parenthesis -= 1;
+    }
+
+    return_val
+}
+
 fn is_binop(token: &Tokens) -> bool {
     match token {
         Tokens::Add       
@@ -314,7 +421,17 @@ fn is_binop(token: &Tokens) -> bool {
         | Tokens::GreaterThan
         | Tokens::LessOrEqual
         | Tokens::GreaterOrEqual 
-        | Tokens::Assignment     => (),
+        | Tokens::Assignment
+        | Tokens::AddAssign   
+        | Tokens::SubtractAssign
+        | Tokens::MultiplyAssign
+        | Tokens::DivideAssign
+        | Tokens::RemainderAssign
+        | Tokens::BitwiseANDAssign
+        | Tokens::BitwiseORAssign
+        | Tokens::BitwiseXORAssign
+        | Tokens::LeftShiftAssign
+        | Tokens::RightShiftAssign  => (),
         _ => return false
     }
     true
@@ -333,7 +450,12 @@ fn precedence(next_token: &Tokens) -> i32 {
         Tokens::BitwiseOR                                     => 30,
         Tokens::LogicalAND                                    => 25,
         Tokens::LogicalOR                                     => 20,
-        Tokens::Assignment                                    => 1,
+        Tokens::Assignment | Tokens::AddAssign 
+        | Tokens::SubtractAssign | Tokens::MultiplyAssign
+        | Tokens::DivideAssign | Tokens::RemainderAssign
+        | Tokens::BitwiseANDAssign | Tokens::BitwiseORAssign
+        | Tokens::BitwiseXORAssign | Tokens::LeftShiftAssign
+        | Tokens::RightShiftAssign                            => 1,
         _ => panic!("Non-valid token in precedence: {next_token:?}")
     }
 }

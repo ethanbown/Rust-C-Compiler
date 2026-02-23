@@ -16,7 +16,7 @@ pub fn semantic_analysis(ast: &Program, counter: &mut UniqueCounter) -> Program 
     let mut variable_map: HashMap<String, String> = HashMap::new();
     let transformed_ast = resolve_program(ast, &mut variable_map, counter);
 
-    dbg!(&transformed_ast);
+    //dbg!(&transformed_ast);
 
     transformed_ast
 }

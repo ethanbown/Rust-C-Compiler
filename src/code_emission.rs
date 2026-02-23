@@ -31,11 +31,15 @@ fn emission_instructions(binary_ast: &Vec<Instructions>) -> String {
     for inst in binary_ast {
         match inst {
             Instructions::Mov(src, dst) => {
+                let is_cl = destination_is_cl(&dst);
                 let src = emission_operand(&src, false);
                 let dst = emission_operand(&dst, false);
-                //data += "\n\n\t# returning ";
-                //data += &src;
-                data += "\tmovl\t";
+                data += 
+                    if is_cl {  
+                        "\tmovb\t"
+                    } else {
+                        "\tmovl\t"
+                    };
                 data += &src;
                 data += ", ";
                 data += &dst;
@@ -142,10 +146,10 @@ fn emission_operand(binary_ast: &Operand, is_setcc: bool) -> String {
         },
         Operand::Reg(register) => {
             if is_setcc {
-                emission_lower_registers(register)
+                emission_byte_registers(register)
             }           
             else {
-                emission_registers(register)
+                emission_doubleword_registers(register)
             }
         },
         Operand::Stack(int) => {
@@ -157,7 +161,7 @@ fn emission_operand(binary_ast: &Operand, is_setcc: bool) -> String {
     data
 }
 
-fn emission_registers(register: &Reg) -> String {
+fn emission_doubleword_registers(register: &Reg) -> String {
     match register {
         Reg::AX   => "%eax".to_string(),
         Reg::DX   => "%edx".to_string(),
@@ -167,7 +171,7 @@ fn emission_registers(register: &Reg) -> String {
     }
 }
 
-fn emission_lower_registers(register: &Reg) -> String {
+fn emission_byte_registers(register: &Reg) -> String {
     match register {
         Reg::AX   => "%al".to_string(),
         Reg::DX   => "%dl".to_string(),
@@ -185,5 +189,17 @@ fn emission_condition_code(cond_code: &ConditionCode) -> String {
         ConditionCode::GE  => "ge".to_string(),
         ConditionCode::L   => "l".to_string(),
         ConditionCode::LE  => "le".to_string(),
+    }
+}
+
+fn destination_is_cl(binary_ast: &Operand) -> bool {
+    match binary_ast {
+        Operand::Reg(register) => {
+            match register {
+                Reg::CL => true,
+                _ => false
+            }
+        }
+        _ => false,
     }
 }

@@ -128,7 +128,7 @@ pub fn stop_at_lex(path: &Path) -> Vec<Tokens> {
     let pd = create_pathdata(path);
     run_preprocessor(&pd);
     let file_path_i = get_preprocessed_file_path(&pd);
-    lexer(&file_path_i, &pd)
+    lexer(&file_path_i,)
 }
 
 /// Returns an AST to semantically analyze.
@@ -168,9 +168,9 @@ pub fn run_preprocessor(pd : &PathData) {
     let preprocessed_file_path = get_preprocessed_file_path(pd);
 
     Command::new("gcc")
-    .args(["-E", "-P", pd.file_path.as_str(), "-o", &preprocessed_file_path])
-    .output()
-    .expect("rcc: failed to create {file_stem}.i");
+        .args(["-E", "-P", pd.file_path.as_str(), "-o", &preprocessed_file_path])
+        .output()
+        .expect("rcc: failed to create {file_stem}.i");
 }
 
 /// Runs custom c compiler and writes assembly to temporary .s file.
@@ -192,15 +192,12 @@ pub fn compile_preprocessed_file(pd: &PathData, path: &Path) {
 pub fn assemble_and_link_file(pd: &PathData) {
     let file_path_s = pd.file_parent.clone() + "/" + pd.file_stem.as_str() + ".s";
     let executable_path = pd.file_parent.clone() + "/" + pd.file_stem.as_str();
-    let output =
-        Command::new("gcc")
+    Command::new("gcc")
         .args([&file_path_s, "-o", &executable_path])
         .output()
         .expect("Failure to create {file_stem}.exe");
     
     fs::remove_file(&file_path_s).expect("Failed to remove {file_path_s}");
-    
-    println!("Output: {}", String::from_utf8(output.stdout.to_vec()).expect("Failure to print output from gcc"));
 }
 
 /// Returns preprocessed file path.
