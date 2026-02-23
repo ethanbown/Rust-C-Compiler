@@ -47,6 +47,7 @@ pub enum Tokens {
     GreaterThan,
     LessOrEqual,
     GreaterOrEqual,
+    Assignment,
 
     // Other
     Invalid
@@ -58,7 +59,7 @@ pub struct PathData {
     pub file_path: String
 }
 
-pub fn lexer(path: &String, pd: &PathData) -> Vec<Tokens> {
+pub fn lexer(path: &String, _pd: &PathData) -> Vec<Tokens> {
     let mut code_file =
         match File::open(&path) {
             Ok(file) => file,
@@ -102,7 +103,8 @@ pub fn lexer(path: &String, pd: &PathData) -> Vec<Tokens> {
         r"^<",
         r"^>",
         r"^<=",
-        r"^>="
+        r"^>=",
+        r"^=",
     ];
 
     let token_set = RegexSet::new(token_patterns).unwrap();
@@ -126,7 +128,10 @@ pub fn lexer(path: &String, pd: &PathData) -> Vec<Tokens> {
         data = data.trim_start().to_string();
     }
 
-    write_lexer_output(pd, &tokens);
+    //write_lexer_output(pd, &tokens);
+
+    //dbg!(&tokens);
+
     tokens
 }
 
@@ -179,6 +184,7 @@ fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>) -> (T
             ">"      => Tokens::GreaterThan,
             "<="     => Tokens::LessOrEqual,
             ">="     => Tokens::GreaterOrEqual,
+            "="      => Tokens::Assignment,
             _ => {
                 let identifier = Regex::new(r"[a-zA-Z_]\w*").unwrap();
                 let constant = Regex::new(r"[0-9]+").unwrap();
@@ -218,7 +224,7 @@ fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>) -> (T
     (token, longest_match.to_string())
 }
 
-fn write_lexer_output(pd: &PathData, tokens: &Vec<Tokens>) {
+fn _write_lexer_output(pd: &PathData, tokens: &Vec<Tokens>) {
     let lexer_output_path = "/home/werea/c_compiler/lexer_outputs/".to_string() + pd.file_stem.as_str() + ".lex";
 
     let mut lexer_output_file = File::create(lexer_output_path).expect("Failed to create lexer file.");
@@ -257,6 +263,7 @@ fn write_lexer_output(pd: &PathData, tokens: &Vec<Tokens>) {
             Tokens::GreaterThan                => data = String::from("GreaterThan"),
             Tokens::LessOrEqual                => data = String::from("LessOrEqual"),
             Tokens::GreaterOrEqual             => data = String::from("GreaterOrEqual"),
+            Tokens::Assignment                 => data = String::from("Assignment"),
             Tokens::Invalid                    => data = String::from("Invalid Token")
         }
         data += ",\n";

@@ -1,4 +1,8 @@
+
 use crate::parser::parser_ast::*;
+use crate::semantic_analysis::UniqueCounter;
+use crate::semantic_analysis::UniqueType;
+use crate::semantic_analysis::make_unique;
 
 pub mod tacky_ast {
     #[derive(Debug)]
@@ -73,50 +77,85 @@ use tacky_ast::IRUnaryOperator as IRUnaryOperator;
 use tacky_ast::IRBinaryOperator as IRBinaryOperator;
 use tacky_ast::Val as Val;
 
-pub fn tacky(ast: &Program) -> IRProgram {
-    let tacky_ast = ir_parse_program(&ast);
+pub fn tacky(ast: &Program, counter: &mut UniqueCounter) -> IRProgram {
+    let tacky_ast = ir_parse_program(&ast, counter);
 
-    //dbg!(&tacky_ast);
+    dbg!(&tacky_ast);
 
     tacky_ast
 }
 
-fn ir_parse_program(ast: &Program) -> IRProgram {
+fn ir_parse_program(ast: &Program, counter: &mut UniqueCounter) -> IRProgram {
     let return_val = match ast {
-        Program::Program(inner) => ir_parse_function(inner)
+        Program::Program(inner) => ir_parse_function(inner, counter)
     };
     IRProgram::IRProgram(return_val)
 }
 
-fn ir_parse_function(ast: &FunctionDefinition) -> IRFunctionDefinition {
+fn ir_parse_function(ast: &FunctionDefinition, counter: &mut UniqueCounter) -> IRFunctionDefinition {
     let (name, instructions) = match ast {
-        FunctionDefinition::Function(name, body) => {
-            let mut temporary_count: i32 = 0;
-            let mut label_count : i32 = 0;
-            (name.to_string(), ir_parse_instructions(&body, &mut temporary_count, &mut label_count, name.to_string()))
-        }
+        FunctionDefinition::Function(name, body) => (name.to_string(), ir_parse_block_items(&body, counter, name.to_string()))
     };
     IRFunctionDefinition::IRFunction(name, instructions)
 }
 
-fn ir_parse_instructions(ast: &Statement, temporary_count: &mut i32, label_count: &mut i32, name: String) -> Vec<IRInstructions> {
+fn ir_parse_block_items(body: &Vec<BlockItem>, counter: &mut UniqueCounter, name: String) -> Vec<IRInstructions> {
+    let mut return_val: Vec<IRInstructions> = Vec::new();
+    for item in body {
+        match item {
+            BlockItem::D(decl) => ir_parse_declaration(decl, &mut return_val, counter),
+            BlockItem::S(stat)   => {
+                let mut inst = ir_parse_instructions(stat, counter, &name);
+                return_val.append(&mut inst);
+            } 
+        }
+    }
+    return_val.push(IRInstructions::Return(Val::Constant(0)));
+    return_val
+}
+
+fn ir_parse_declaration(decl: &Declaration, instructions: &mut Vec<IRInstructions>, counter: &mut UniqueCounter) {
+    match decl {
+        Declaration::Declaration(name, init) => {
+            if init.is_some() {
+                let copy = init.clone();
+                let copy2 = init.clone();
+
+                dbg!(&copy2.unwrap());
+
+                let return_val = emit_tacky(&copy.unwrap(), instructions, counter, name);
+                instructions.push(IRInstructions::Copy(return_val, Val::Var(name.clone())));
+            } else {
+                ()
+            }
+        }
+    }
+}
+
+fn ir_parse_instructions(ast: &Statement, counter: &mut UniqueCounter, name: &String) -> Vec<IRInstructions> {
     let return_val: Vec<IRInstructions> = match ast {
         Statement::Return(exp) => {
             let mut instructions: Vec<IRInstructions> = Vec::new();
-            let return_value = emit_tacky(exp, &mut instructions, temporary_count, label_count, &name);
+            let return_value = emit_tacky(exp, &mut instructions, counter, &name);
             instructions.push(IRInstructions::Return(return_value));
             instructions
-        }
+        },
+        Statement::Expression(exp) => {
+            let mut instructions: Vec<IRInstructions> = Vec::new();
+            emit_tacky(exp, &mut instructions, counter, &name);
+            instructions
+        },
+        Statement::Null => Vec::new()
     };
     return_val
 }
 
-fn emit_tacky(ast: &Exp, instructions: &mut Vec<IRInstructions>, temporary_count: &mut i32, label_count: &mut i32, name: &String) -> Val {
+fn emit_tacky(ast: &Exp, instructions: &mut Vec<IRInstructions>, counter: &mut UniqueCounter, name: &String) -> Val {
     match ast {
         Exp::Constant(c) => Val::Constant(*c),
         Exp::Unary(op, inner) => {
-            let src = emit_tacky(inner, instructions, &mut *temporary_count, &mut *label_count, name);
-            let dst_name = make_temporary(name, temporary_count);
+            let src = emit_tacky(inner, instructions, counter, name);
+            let dst_name = make_unique(name, UniqueType::Temporary, counter);
             let dst = Val::Var(dst_name);
             let tacky_op = ir_parse_unary_op(op);
             instructions.push(IRInstructions::Unary(tacky_op, src, dst.clone()));
@@ -124,14 +163,16 @@ fn emit_tacky(ast: &Exp, instructions: &mut Vec<IRInstructions>, temporary_count
         },
         Exp::Binary(op, e1,e2) => {
             
-            let dst_name = make_temporary(name, temporary_count);
+            let dst_name = make_unique(name, UniqueType::Temporary, counter);
             let dst = Val::Var(dst_name);
             if is_logical_and(op) {
-                let false_label = make_label("and_label".to_string(), label_count);
-                let end_label = make_label("end".to_string(), label_count);
-                let v1 = emit_tacky(e1, instructions, &mut *temporary_count, &mut *label_count, name);
+                let and_label = String::from("and_label");
+                let end = String::from("end");
+                let false_label = make_unique(&and_label, UniqueType::Label, counter);
+                let end_label = make_unique(&end, UniqueType::Label, counter);
+                let v1 = emit_tacky(e1, instructions, counter, name);
                 instructions.push(IRInstructions::JumpIfZero(v1, false_label.clone()));
-                let v2 = emit_tacky(e2, instructions, &mut *temporary_count, &mut *label_count, name);
+                let v2 = emit_tacky(e2, instructions, counter, name);
                 instructions.push(IRInstructions::JumpIfZero(v2, false_label.clone()));
                 instructions.push(IRInstructions::Copy(Val::Constant(1), dst.clone()));
                 instructions.push(IRInstructions::Jump(end_label.clone()));
@@ -140,11 +181,13 @@ fn emit_tacky(ast: &Exp, instructions: &mut Vec<IRInstructions>, temporary_count
                 instructions.push(IRInstructions::Label(end_label));
                 dst
             } else if is_logical_or(op) { 
-                let true_label = make_label("or_label".to_string(), label_count);
-                let end_label = make_label("end".to_string(), label_count);
-                let v1 = emit_tacky(e1, instructions, &mut *temporary_count, &mut *label_count, name);
+                let or_label = String::from("or_label");
+                let end = String::from("end");
+                let true_label = make_unique(&or_label, UniqueType::Label, counter);
+                let end_label = make_unique(&end, UniqueType::Label, counter);
+                let v1 = emit_tacky(e1, instructions, counter, name);
                 instructions.push(IRInstructions::JumpIfNotZero(v1, true_label.clone()));
-                let v2 = emit_tacky(e2, instructions, &mut *temporary_count, &mut *label_count, name);
+                let v2 = emit_tacky(e2, instructions, counter, name);
                 instructions.push(IRInstructions::JumpIfNotZero(v2, true_label.clone()));
                 instructions.push(IRInstructions::Copy(Val::Constant(0), dst.clone()));
                 instructions.push(IRInstructions::Jump(end_label.clone()));
@@ -153,13 +196,21 @@ fn emit_tacky(ast: &Exp, instructions: &mut Vec<IRInstructions>, temporary_count
                 instructions.push(IRInstructions::Label(end_label));
                 dst
             } else {
-                let v1 = emit_tacky(e1, instructions, &mut *temporary_count, &mut *label_count, name);
-                let v2 = emit_tacky(e2, instructions, &mut *temporary_count, &mut *label_count, name);
+                let v1 = emit_tacky(e1, instructions, counter, name);
+                let v2 = emit_tacky(e2, instructions, counter, name);
                 let tacky_op = ir_parse_binary_op(op);
                 instructions.push(IRInstructions::Binary(tacky_op, v1, v2, dst.clone()));
                 dst
             }
-        }
+        },
+        Exp::Var(var) => Val::Var(var.clone()),
+        Exp::Assignment(lhs, rhs) => {
+            let result = emit_tacky(rhs, instructions, counter, name);
+            let var = emit_tacky(lhs, instructions, counter, name);
+            instructions.push(IRInstructions::Copy(result, var.clone()));
+            var
+        },
+
     }
 }
 
@@ -194,19 +245,6 @@ fn ir_parse_binary_op(op: &BinaryOperator) -> IRBinaryOperator {
     }
 }
 
-fn make_temporary(name: &String, temporary_count: &mut i32) -> String {
-    let mut temporary = String::new();
-    temporary += name.clone().as_str();
-    temporary += ".";
-    temporary += temporary_count.to_string().as_str();
-    *temporary_count += 1;
-    temporary
-}
-
-fn make_label(name: String, label_count: &mut i32) -> String {
-    make_temporary(&name, label_count)
-}
-
 fn is_logical_and(op: &BinaryOperator) -> bool {
     match op {
         BinaryOperator::LogicalAND => true,
@@ -219,4 +257,4 @@ fn is_logical_or(op: &BinaryOperator) -> bool {
         BinaryOperator::LogicalOR => true,
         _ => false
     }
-}
+} 
