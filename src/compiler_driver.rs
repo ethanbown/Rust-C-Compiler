@@ -190,13 +190,13 @@ pub fn compile_preprocessed_file(pd: &PathData, path: &Path) {
 
 /// Assembles and links .s file into executable.
 pub fn assemble_and_link_file(pd: &PathData) {
-    let file_path_s = pd.file_parent.clone() + "/" + pd.file_stem.as_str() + ".s";
-    let executable_path = pd.file_parent.clone() + "/" + pd.file_stem.as_str();
+    let file_path_s = get_assembly_file_path(&pd);
+    let executable_path= get_file_path(&pd);
     Command::new("gcc")
         .args([&file_path_s, "-o", &executable_path])
         .output()
         .expect("Failure to create {file_stem}.exe");
-    
+
     fs::remove_file(&file_path_s).expect("Failed to remove {file_path_s}");
 }
 

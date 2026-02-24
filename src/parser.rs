@@ -6,6 +6,9 @@ pub mod parser_ast {
     use String as Identifier;
     use BlockItem as Body;
     use Exp as Init;
+    use Exp as Condition;
+    use Statement as Then;
+    use Statement as Else;
 
     #[derive(Debug)]
     pub enum Program {
@@ -17,10 +20,11 @@ pub mod parser_ast {
         Function(Name, Vec<Body>)
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub enum Statement {
         Return(Exp),
         Expression(Exp),
+        If(Condition, Box<Then>, Option<Box<Else>>),
         Null
     }
 
@@ -34,9 +38,9 @@ pub mod parser_ast {
         Constant(i32),
         Var(Identifier),
         Unary(UnaryOperator, Box<Exp>),
-        
         Binary(BinaryOperator, Box<Exp>, Box<Exp>),
-        Assignment(Box<Exp>, Box<Exp>)
+        Assignment(Box<Exp>, Box<Exp>),
+        Conditional(Box<Condition>, Box<Exp>, Box<Exp>)
     }
 
     #[derive(Debug, Clone)]
@@ -160,6 +164,20 @@ fn parse_statement(tokens: &mut Vec<Tokens>) -> Statement {
     } else if next_token == Tokens::Semicolon {
         take_token(tokens);
         Statement::Null
+    } else if next_token == Tokens::If {
+        take_token(tokens);
+        expected_token(Tokens::OpenParenthesis, tokens);
+        let condition = parse_exp(tokens, 0);
+        expected_token(Tokens::ClosedParenthesis, tokens);
+        let if_statement = parse_statement(tokens);
+        let next_token = peek(tokens);
+        if next_token == Tokens::Else {
+            take_token(tokens);
+            let else_statement = parse_statement(tokens);
+            Statement::If(condition, Box::new(if_statement), Some(Box::new(else_statement)))
+        } else {
+            Statement::If(condition, Box::new(if_statement), None)
+        }
     } else {
         let exp = parse_exp(tokens, 0);
         expected_token(Tokens::Semicolon, tokens);
@@ -195,6 +213,10 @@ fn parse_exp(tokens: &mut Vec<Tokens>, min_prec: i32) -> Exp {
             let operator = parse_binop(tokens);
             let right = parse_exp(tokens, precedence(&next_token));
             left = Exp::Assignment(Box::new(left.clone()), Box::new(Exp::Binary(operator, Box::new(left), Box::new(right))));
+        } else if next_token == Tokens::QuestionMark {
+            let middle = parse_conditional_middle(tokens);
+            let right = parse_exp(tokens, precedence(&next_token));
+            left = Exp::Conditional(Box::new(left), Box::new(middle), Box::new(right))
         } else {
             let operator = parse_binop(tokens);
             let right = parse_exp(tokens, precedence(&next_token) + 1);
@@ -304,6 +326,14 @@ fn parse_binop(tokens: &mut Vec<Tokens>) -> BinaryOperator {
         Tokens::GreaterOrEqual => BinaryOperator::GreaterOrEqual,
         _ => panic!("Issue in parse_binop")
     }
+}
+
+fn parse_conditional_middle(tokens: &mut Vec<Tokens>) -> Exp {
+    expected_token(Tokens::QuestionMark, tokens);
+    let return_val = parse_exp(tokens, 0);
+    expected_token(Tokens::Colon, tokens);
+
+    return_val
 }
 
 fn is_compound_assignment(token: &Tokens) -> bool {
@@ -431,7 +461,8 @@ fn is_binop(token: &Tokens) -> bool {
         | Tokens::BitwiseORAssign
         | Tokens::BitwiseXORAssign
         | Tokens::LeftShiftAssign
-        | Tokens::RightShiftAssign  => (),
+        | Tokens::RightShiftAssign
+        | Tokens::QuestionMark     => (),
         _ => return false
     }
     true
@@ -450,6 +481,7 @@ fn precedence(next_token: &Tokens) -> i32 {
         Tokens::BitwiseOR                                     => 30,
         Tokens::LogicalAND                                    => 25,
         Tokens::LogicalOR                                     => 20,
+        Tokens::QuestionMark                                  => 10,
         Tokens::Assignment | Tokens::AddAssign 
         | Tokens::SubtractAssign | Tokens::MultiplyAssign
         | Tokens::DivideAssign | Tokens::RemainderAssign

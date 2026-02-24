@@ -18,12 +18,16 @@ pub enum Tokens {
     ClosedParenthesis,
     OpenCurlyBrace,
     ClosedCurlyBrace,
+    QuestionMark,
+    Colon,
     Semicolon,
 
     // Keywords
     Int,
     Return,
     Void,
+    If,
+    Else,
 
     // Unary Operators
     Negation,
@@ -94,6 +98,8 @@ pub fn lexer(path: &String) -> Vec<Tokens> {
         r"^int\b",
         r"^void\b",
         r"^return\b",
+        r"^if",
+        r"^else",
         r"^\(",
         r"^\)",
         r"^\{",
@@ -131,7 +137,9 @@ pub fn lexer(path: &String) -> Vec<Tokens> {
         r"^\|=",
         r"^\^=",
         r"^<<=",
-        r"^>>="
+        r"^>>=",
+        r"^\?",
+        r"^:"
     ];
 
     let token_set = RegexSet::new(token_patterns).unwrap();
@@ -187,11 +195,15 @@ fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>) -> (T
             "int"    => Tokens::Int,
             "void"   => Tokens::Void,
             "return" => Tokens::Return,
+            "if"     => Tokens::If,
+            "else"   => Tokens::Else,
             "("      => Tokens::OpenParenthesis,
             ")"      => Tokens::ClosedParenthesis,
             "{"      => Tokens::OpenCurlyBrace,
             "}"      => Tokens::ClosedCurlyBrace,
+            ":"      => Tokens::Colon,
             ";"      => Tokens::Semicolon,
+            "?"      => Tokens::QuestionMark,
             "-"      => Tokens::Negation,
             "~"      => Tokens::Complement,
             "+"      => Tokens::Add,

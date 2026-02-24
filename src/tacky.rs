@@ -142,7 +142,34 @@ fn ir_parse_instructions(ast: &Statement, counter: &mut UniqueCounter, name: &St
             emit_tacky(exp, &mut instructions, counter, &name);
             instructions
         },
-        Statement::Null => Vec::new()
+        Statement::Null => Vec::new(),
+        Statement::If(condition, then, els) => {
+            let mut instructions: Vec<IRInstructions> = Vec::new();
+            let return_val = emit_tacky(condition, &mut instructions, counter, name);
+            let mut statement = ir_parse_instructions(then, counter, name);
+            let if_end = String::from("if_end");
+            let if_end_label = make_unique(&if_end, UniqueType::Label, counter); 
+
+            if els.is_some() {
+                let else_string = String::from("else_branch");
+                let else_label = make_unique(&else_string, UniqueType::Label, counter);
+                instructions.push(IRInstructions::JumpIfZero(return_val, else_label.clone()));
+                instructions.append(&mut statement);
+                instructions.push(IRInstructions::Jump(if_end_label.clone()));
+                instructions.push(IRInstructions::Label(else_label));
+                let els = els.clone().unwrap();
+                let mut statement_2 = ir_parse_instructions(&els, counter, name);
+                instructions.append(&mut statement_2);
+                instructions.push(IRInstructions::Label(if_end_label));
+
+            } else {
+                instructions.push(IRInstructions::JumpIfZero(return_val, if_end_label.clone()));
+                instructions.append(&mut statement);
+                instructions.push(IRInstructions::Label(if_end_label));
+            }
+            
+            instructions
+        }
     };
     return_val
 }
@@ -207,6 +234,25 @@ fn emit_tacky(ast: &Exp, instructions: &mut Vec<IRInstructions>, counter: &mut U
             instructions.push(IRInstructions::Copy(result, var.clone()));
             var
         },
+        Exp::Conditional(condition, e1, e2) => {
+            let e2_string = String::from("cond_e2");
+            let e2_label = make_unique(&e2_string, UniqueType::Label, counter);
+            let end = String::from("cond_end");
+            let end_label = make_unique(&end, UniqueType::Label, counter);
+            let result_name = make_unique(name, UniqueType::Temporary, counter);
+            
+            let condition = emit_tacky(condition, instructions, counter, name);
+            instructions.push(IRInstructions::JumpIfZero(condition.clone(), e2_label.clone()));
+            let v1 = emit_tacky(e1, instructions, counter, name);
+            instructions.push(IRInstructions::Copy(v1, Val::Var(result_name.clone())));
+            instructions.push(IRInstructions::Jump(end_label.clone()));
+            instructions.push(IRInstructions::Label(e2_label));
+            let v2 = emit_tacky(e2, instructions, counter, name);
+            instructions.push(IRInstructions::Copy(v2, Val::Var(result_name.clone())));
+            instructions.push(IRInstructions::Label(end_label));
+
+            Val::Var(result_name)
+        }
 
     }
 }

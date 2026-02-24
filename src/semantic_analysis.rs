@@ -76,6 +76,7 @@ fn resolve_exp(exp: &Exp, variable_map: &mut HashMap<String, String>) -> Exp {
         },
         Exp::Var(var) => {
             if variable_map.contains_key(var) {
+                dbg!(&var);
                 Exp::Var(variable_map.get(var).unwrap().clone())
             } else {
                 panic!("Undeclared variable!: {var}")
@@ -84,7 +85,9 @@ fn resolve_exp(exp: &Exp, variable_map: &mut HashMap<String, String>) -> Exp {
         Exp::Unary(op, exp) => Exp::Unary(op.clone(), Box::new(resolve_exp(exp, variable_map))),
         Exp::Binary(op, src, dst) => 
             Exp::Binary(op.clone(), Box::new(resolve_exp(src, variable_map)), Box::new(resolve_exp(dst, variable_map))),
-        Exp::Constant(num) => Exp::Constant(*num)
+        Exp::Constant(num) => Exp::Constant(*num),
+        Exp::Conditional(condition, then, els) =>
+            Exp::Conditional(Box::new(resolve_exp(condition, variable_map)), Box::new(resolve_exp(then, variable_map)), Box::new(resolve_exp(els, variable_map)))
     }
 }
 
@@ -92,7 +95,15 @@ fn resolve_statement(statement: &Statement, variable_map: &mut HashMap<String, S
     match statement {
         Statement::Return(exp) => Statement::Return(resolve_exp(exp, variable_map)),
         Statement::Expression(exp) => Statement::Expression(resolve_exp(exp, variable_map)),
-        Statement::Null => Statement::Null
+        Statement::Null => Statement::Null,
+        Statement::If(condition, then, els) => {
+            if els.is_some() {
+                let els = resolve_statement(&els.clone().unwrap(), variable_map);
+                Statement::If(resolve_exp(condition, variable_map), Box::new(resolve_statement(then, variable_map)), Some(Box::new(els)))
+            } else {
+                Statement::If(resolve_exp(condition, variable_map), Box::new(resolve_statement(then, variable_map)), els.clone())
+            }
+        }
     }
 }
 
