@@ -77,6 +77,7 @@ use tacky_ast::IRUnaryOperator as IRUnaryOperator;
 use tacky_ast::IRBinaryOperator as IRBinaryOperator;
 use tacky_ast::Val as Val;
 
+/// Invokes the TACKY/IR generation phase and returns an IR version of the program.
 pub fn tacky(ast: &Program, counter: &mut UniqueCounter) -> IRProgram {
     let tacky_ast = ir_parse_program(&ast, counter);
 
@@ -85,6 +86,7 @@ pub fn tacky(ast: &Program, counter: &mut UniqueCounter) -> IRProgram {
     tacky_ast
 }
 
+/// Parses the main function in the program.
 fn ir_parse_program(ast: &Program, counter: &mut UniqueCounter) -> IRProgram {
     let return_val = match ast {
         Program::Program(inner) => ir_parse_function(inner, counter)
@@ -92,13 +94,24 @@ fn ir_parse_program(ast: &Program, counter: &mut UniqueCounter) -> IRProgram {
     IRProgram::IRProgram(return_val)
 }
 
+/// Parses function and function body, returning an IR function.
 fn ir_parse_function(ast: &FunctionDefinition, counter: &mut UniqueCounter) -> IRFunctionDefinition {
-    let (name, instructions) = match ast {
-        FunctionDefinition::Function(name, body) => (name.to_string(), ir_parse_block_items(&body, counter, name.to_string()))
+    let (name, mut instructions) = match ast {
+        FunctionDefinition::Function(name, body) => (name.to_string(), ir_parse_block(&body, counter, name.to_string()))
     };
+
+    instructions.push(IRInstructions::Return(Val::Constant(0)));
     IRFunctionDefinition::IRFunction(name, instructions)
 }
 
+/// Passes vector of instruction on
+fn ir_parse_block(body: &Block, counter: &mut UniqueCounter, name: String) -> Vec<IRInstructions> {
+    match body {
+        Block::Block(items) => ir_parse_block_items(&items, counter, name.to_string())
+    }
+}
+
+/// Parses each declaration and statement in the block, returning the IR instructions.
 fn ir_parse_block_items(body: &Vec<BlockItem>, counter: &mut UniqueCounter, name: String) -> Vec<IRInstructions> {
     let mut return_val: Vec<IRInstructions> = Vec::new();
     for item in body {
@@ -110,7 +123,7 @@ fn ir_parse_block_items(body: &Vec<BlockItem>, counter: &mut UniqueCounter, name
             } 
         }
     }
-    return_val.push(IRInstructions::Return(Val::Constant(0)));
+
     return_val
 }
 
@@ -169,11 +182,98 @@ fn ir_parse_instructions(ast: &Statement, counter: &mut UniqueCounter, name: &St
             }
             
             instructions
+        },
+        Statement::Compound(block) => ir_parse_block(block, counter, name.clone()),
+        Statement::Break(label)   => {
+            let mut instructions: Vec<IRInstructions> = Vec::new();
+            let break_label = create_break_label(label);
+            instructions.push(IRInstructions::Jump(break_label));
+
+            instructions
+        },
+        Statement::Continue(label) => {
+            let mut instructions: Vec<IRInstructions> = Vec::new();
+            let continue_label = create_continue_label(label);
+            instructions.push(IRInstructions::Jump(continue_label));
+
+            instructions
+        },
+        Statement::DoWhile(body, condition, label) => {
+            let mut instructions: Vec<IRInstructions> = Vec::new();
+            let break_label = create_break_label(&label.clone());
+            let continue_label = create_continue_label(&label.clone());
+
+            instructions.push(IRInstructions::Label(label.clone()));
+            let mut body = ir_parse_instructions(body, counter, name);
+            instructions.append(&mut body);
+            instructions.push(IRInstructions::Label(continue_label));
+            let condition = emit_tacky(condition, &mut instructions, counter, name);
+            instructions.push(IRInstructions::JumpIfNotZero(condition, label.clone()));
+            instructions.push(IRInstructions::Label(break_label));
+
+            instructions
+        },
+        Statement::While(condition, body, label) => {
+            let mut instructions: Vec<IRInstructions> = Vec::new();
+            let break_label = create_break_label(&label.clone());
+            let continue_label = create_continue_label(&label.clone());
+
+            instructions.push(IRInstructions::Label(continue_label.clone()));
+            let condition = emit_tacky(condition, &mut instructions, counter, name);
+            instructions.push(IRInstructions::JumpIfZero(condition, break_label.clone()));
+            let mut body = ir_parse_instructions(body, counter, name);
+            instructions.append(&mut body);
+            instructions.push(IRInstructions::Jump(continue_label));
+            instructions.push(IRInstructions::Label(break_label));
+
+            instructions
+        },
+        Statement::For(init, condition, post, body, label) => {
+            let mut instructions: Vec<IRInstructions> = Vec::new();
+            let break_label = create_break_label(&label.clone());
+            let continue_label = create_continue_label(&label.clone());
+
+            ir_parse_for_init(init, &mut instructions, counter, name);
+            instructions.push(IRInstructions::Label(label.clone()));
+            let condition = ir_parse_optional_exp(condition, &mut instructions, counter, name);
+            if condition.is_some() {
+                let condition = condition.unwrap();
+                instructions.push(IRInstructions::JumpIfZero(condition, break_label.clone()));
+            }
+            let mut body = ir_parse_instructions(body, counter, name);
+            instructions.append(&mut body);
+            instructions.push(IRInstructions::Label(continue_label));
+            ir_parse_optional_exp(post, &mut instructions, counter, name);
+            instructions.push(IRInstructions::Jump(label.clone()));
+            instructions.push(IRInstructions::Label(break_label));
+
+            instructions
         }
     };
     return_val
 }
 
+fn ir_parse_for_init(ast: &ForInit, instructions: &mut Vec<IRInstructions>, counter: &mut UniqueCounter, name: &String) {
+    match ast {
+        ForInit::InitDecl(decl) => ir_parse_declaration(decl, instructions, counter),
+        ForInit::InitExp(exp)   => {
+            if exp.is_some() {
+                let exp = exp.clone().unwrap();
+                emit_tacky(&exp, instructions, counter, name);
+            }
+        }
+    }
+}
+
+fn ir_parse_optional_exp(ast: &Option<Exp>, instructions: &mut Vec<IRInstructions>, counter: &mut UniqueCounter, name: &String) -> Option<Val> {
+    match ast {
+        Some(exp) =>  Some(emit_tacky(exp, instructions, counter, name)),
+        None            =>  None
+    }
+}
+/// Handles expression and generates the instructions to compute them.
+/// 
+/// Handles complex instructions.
 fn emit_tacky(ast: &Exp, instructions: &mut Vec<IRInstructions>, counter: &mut UniqueCounter, name: &String) -> Val {
     match ast {
         Exp::Constant(c) => Val::Constant(*c),
@@ -257,6 +357,7 @@ fn emit_tacky(ast: &Exp, instructions: &mut Vec<IRInstructions>, counter: &mut U
     }
 }
 
+/// Converts AST unary op to IR unary op.
 fn ir_parse_unary_op(ast: &UnaryOperator) -> IRUnaryOperator {
     match ast {
         UnaryOperator::Complement  => IRUnaryOperator::Complement,
@@ -265,6 +366,7 @@ fn ir_parse_unary_op(ast: &UnaryOperator) -> IRUnaryOperator {
     }
 }
 
+/// Converts AST binary op IR binary op.
 fn ir_parse_binary_op(op: &BinaryOperator) -> IRBinaryOperator {
     match op {
         BinaryOperator::Add               => IRBinaryOperator::Add,
@@ -301,3 +403,11 @@ fn is_logical_or(op: &BinaryOperator) -> bool {
         _ => false
     }
 } 
+
+fn create_break_label(label: &String) -> String {
+    "break_".to_string() + &label
+}
+
+fn create_continue_label(label: &String) -> String {
+    "continue_".to_string() + &label
+}

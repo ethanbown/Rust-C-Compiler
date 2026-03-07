@@ -128,7 +128,7 @@ pub fn stop_at_lex(path: &Path) -> Vec<Tokens> {
     let pd = create_pathdata(path);
     run_preprocessor(&pd);
     let file_path_i = get_preprocessed_file_path(&pd);
-    lexer(&file_path_i,)
+    lexer(&file_path_i)
 }
 
 /// Returns an AST to semantically analyze.

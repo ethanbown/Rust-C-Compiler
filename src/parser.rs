@@ -1,12 +1,15 @@
 use crate::lexer::Tokens;
 use crate::parser::parser_ast::BinaryOperator;
+use crate::parser::parser_ast::Block;
 
 pub mod parser_ast {
     use String as Name;
     use String as Identifier;
-    use BlockItem as Body;
+    use String as Label;
     use Exp as Init;
     use Exp as Condition;
+    use Exp as Post;
+    use Statement as Body;
     use Statement as Then;
     use Statement as Else;
 
@@ -17,7 +20,7 @@ pub mod parser_ast {
 
     #[derive(Debug)]
     pub enum FunctionDefinition {
-        Function(Name, Vec<Body>)
+        Function(Name, Block)
     }
 
     #[derive(Debug, Clone)]
@@ -25,10 +28,16 @@ pub mod parser_ast {
         Return(Exp),
         Expression(Exp),
         If(Condition, Box<Then>, Option<Box<Else>>),
+        Compound(Block),
+        Break(Label),
+        Continue(Label),
+        While(Condition, Box<Body>, Label),
+        DoWhile(Box<Body>, Condition, Label),
+        For(ForInit, Option<Condition>, Option<Post>, Box<Body>, Label),
         Null
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub enum Declaration {
         Declaration(Name, Option<Init>)
     }
@@ -72,11 +81,23 @@ pub mod parser_ast {
         GreaterOrEqual
     }
 
-      #[derive(Debug)]
-      pub enum BlockItem {
-        S(Statement),
-        D(Declaration)
-      }
+    #[derive(Debug, Clone)]
+    pub enum ForInit {
+        InitDecl(Declaration),
+        InitExp(Option<Exp>)
+    }
+
+    // Only for function body and block statements
+    #[derive(Debug, Clone)]
+    pub enum Block {
+        Block(Vec<BlockItem>)
+    }
+
+    #[derive(Debug, Clone)]
+    pub enum BlockItem {
+    S(Statement),
+    D(Declaration)
+    }
 }
 
 use parser_ast::Program as Program;
@@ -86,6 +107,7 @@ use parser_ast::Exp as Exp;
 use parser_ast::UnaryOperator as UnaryOperator;
 use parser_ast::BlockItem as BlockItem;
 use parser_ast::Declaration as Declaration;
+use parser_ast::ForInit as ForInit;
 
 #[cfg(test)]
 mod tests {
@@ -112,22 +134,28 @@ fn parse_program(tokens: &mut Vec<Tokens>) -> Program {
 
 /// Parse function and function body.
 fn parse_function(tokens: &mut Vec<Tokens>) -> FunctionDefinition {
+    // Checks for function elements surrounding body
     expected_token(Tokens::Int, tokens);
     let name = parse_identifier(tokens);
     expected_token(Tokens::OpenParenthesis, tokens);
     expected_token(Tokens::Void, tokens);
     expected_token(Tokens::ClosedParenthesis, tokens);
+    FunctionDefinition::Function(name, parse_block(tokens))
+}
+
+/// Handles a list of statements/declarations in compound statements and function bodies
+fn parse_block(tokens: &mut Vec<Tokens>) -> Block {
     expected_token(Tokens::OpenCurlyBrace, tokens);
-    let mut function_body: Vec<BlockItem> = Vec::new();
+    let mut block_body: Vec<BlockItem> = Vec::new();
     
     // Goes through every line inside function body
     while peek(tokens) != Tokens::ClosedCurlyBrace {
         let next_block_item = parse_block_item(tokens);
-        function_body.push(next_block_item);
+        block_body.push(next_block_item);
     }
 
     take_token(tokens);
-    FunctionDefinition::Function(name, function_body)
+    Block::Block(block_body)
 }
 
 /// Parse identifier and return string name.
@@ -157,11 +185,13 @@ fn parse_block_item(tokens: &mut Vec<Tokens>) -> BlockItem {
 fn parse_statement(tokens: &mut Vec<Tokens>) -> Statement {
     let next_token = peek(tokens);
     if next_token == Tokens::Return {
+        // Handles returns
         take_token(tokens);
         let return_val = parse_exp(tokens, 0);
         expected_token(Tokens::Semicolon, tokens);
         Statement::Return(return_val)
     } else if next_token == Tokens::Semicolon {
+        // Handles empty statements
         take_token(tokens);
         Statement::Null
     } else if next_token == Tokens::If {
@@ -171,6 +201,8 @@ fn parse_statement(tokens: &mut Vec<Tokens>) -> Statement {
         expected_token(Tokens::ClosedParenthesis, tokens);
         let if_statement = parse_statement(tokens);
         let next_token = peek(tokens);
+        
+        // Need to peek to check for optional else
         if next_token == Tokens::Else {
             take_token(tokens);
             let else_statement = parse_statement(tokens);
@@ -178,10 +210,61 @@ fn parse_statement(tokens: &mut Vec<Tokens>) -> Statement {
         } else {
             Statement::If(condition, Box::new(if_statement), None)
         }
+    } else if next_token == Tokens::OpenCurlyBrace {
+        // Start of compound block
+        Statement::Compound(parse_block(tokens))
+    } else if next_token == Tokens::Break {
+        take_token(tokens);
+        expected_token(Tokens::Semicolon, tokens);
+        Statement::Break("TEMP".to_string())
+    } else if next_token == Tokens::Continue {
+        take_token(tokens);
+        expected_token(Tokens::Semicolon, tokens);
+        Statement::Continue("TEMP".to_string())
+    } else if next_token == Tokens::While {
+        take_token(tokens);
+        expected_token(Tokens::OpenParenthesis, tokens);
+        let condition = parse_exp(tokens, 0);
+        expected_token(Tokens::ClosedParenthesis, tokens);
+        let inner_stat = parse_statement(tokens);
+        Statement::While(condition, Box::new(inner_stat), "TEMP".to_string())
+    } else if next_token == Tokens::Do {
+        take_token(tokens);
+        let inner_stat = parse_statement(tokens);
+        expected_token(Tokens::While, tokens);
+        expected_token(Tokens::OpenParenthesis, tokens);
+        let condition = parse_exp(tokens, 0);
+        expected_token(Tokens::ClosedParenthesis, tokens);
+        expected_token(Tokens::Semicolon, tokens);
+        Statement::DoWhile(Box::new(inner_stat), condition, "TEMP".to_string())
+    } else if next_token == Tokens::For {
+        take_token(tokens);
+        expected_token(Tokens::OpenParenthesis, tokens);
+        let for_init = parse_for_init(tokens);
+        let condition = parse_optional_exp(tokens, Tokens::Semicolon);
+        expected_token(Tokens::Semicolon, tokens);
+        let last_exp = parse_optional_exp(tokens, Tokens::ClosedParenthesis);
+        expected_token(Tokens::ClosedParenthesis, tokens);
+        let inner_stat = parse_statement(tokens);
+        Statement::For(for_init, condition, last_exp, Box::new(inner_stat), "TEMP".to_string())
+
     } else {
+        // Expression statement
         let exp = parse_exp(tokens, 0);
         expected_token(Tokens::Semicolon, tokens);
         Statement::Expression(exp)
+    }
+}
+
+/// Either returns a declaration or expression for initialization
+fn parse_for_init(tokens: &mut Vec<Tokens>) -> ForInit {
+    let next_token = peek(tokens);
+    if next_token == Tokens::Int {
+        ForInit::InitDecl(parse_declaration(tokens))
+    } else {
+        let return_val = ForInit::InitExp(parse_optional_exp(tokens, Tokens::Semicolon));
+        expected_token(Tokens::Semicolon, tokens);
+        return_val
     }
 }
 
@@ -189,6 +272,8 @@ fn parse_statement(tokens: &mut Vec<Tokens>) -> Statement {
 fn parse_declaration(tokens: &mut Vec<Tokens>) -> Declaration {
     expected_token(Tokens::Int, tokens);
     let identifier = parse_identifier(tokens);
+
+    // Either a declaration is initialized or not
     if peek(tokens) == Tokens::Assignment {
         take_token(tokens);
         let exp = parse_exp(tokens, 0);
@@ -200,7 +285,9 @@ fn parse_declaration(tokens: &mut Vec<Tokens>) -> Declaration {
     }
 }
 
-///
+/// Parses precedence and associativity via precedence climbing
+/// 
+/// min_prec must be zero on the first call, > 0 on recursive calls
 fn parse_exp(tokens: &mut Vec<Tokens>, min_prec: i32) -> Exp {
     let mut left = parse_factor(tokens);
     let mut next_token = peek(tokens);
@@ -225,6 +312,17 @@ fn parse_exp(tokens: &mut Vec<Tokens>, min_prec: i32) -> Exp {
         next_token = peek(tokens);
     }
     return left;
+}
+
+// Peeks at next token to determine if there is an optional token by
+// comparing next token to end token.
+fn parse_optional_exp(tokens: &mut Vec<Tokens>, end_token: Tokens) -> Option<Exp> {
+    let next_token = peek(tokens);
+    if next_token == end_token {
+        None
+    } else {
+        Some(parse_exp(tokens, 0))
+    }
 }
 
 fn parse_factor(tokens: &mut Vec<Tokens>) -> Exp {
@@ -293,6 +391,7 @@ fn parse_unop(tokens: &mut Vec<Tokens>) -> UnaryOperator {
     unop
 }
 
+/// Returns parser version of binary operator.
 fn parse_binop(tokens: &mut Vec<Tokens>) -> BinaryOperator {
     let token = take_token(tokens);
     match token {
@@ -328,6 +427,7 @@ fn parse_binop(tokens: &mut Vec<Tokens>) -> BinaryOperator {
     }
 }
 
+/// Deals with "? e1 :" of "cond ? e1 : e2" expressions.
 fn parse_conditional_middle(tokens: &mut Vec<Tokens>) -> Exp {
     expected_token(Tokens::QuestionMark, tokens);
     let return_val = parse_exp(tokens, 0);
@@ -352,6 +452,7 @@ fn is_compound_assignment(token: &Tokens) -> bool {
     }
 }
 
+/// Removes token and checks if removed value is the expected token.
 fn expected_token(expected: Tokens, tokens: &mut Vec<Tokens>) {
     let actual = take_token(tokens);
     if actual != expected {
@@ -359,7 +460,7 @@ fn expected_token(expected: Tokens, tokens: &mut Vec<Tokens>) {
     }
 }
 
-/// Removes and returns token at the end of Vec\<Tokens\>.
+/// Removes and returns token at the end of tokens.
 fn take_token(tokens: &mut Vec<Tokens>) -> Tokens {
     let token = tokens.pop();
     let token = match token {
@@ -369,6 +470,7 @@ fn take_token(tokens: &mut Vec<Tokens>) -> Tokens {
     token
 }
 
+/// Returns token at end of tokens without removal.
 fn peek(tokens: &mut Vec<Tokens>) -> Tokens {
     let token  = take_token(tokens);
     tokens.push(token.clone());
@@ -408,6 +510,7 @@ fn is_increment_or_decrement(token: &Tokens) -> bool {
     }
 }
 
+/// Checks if next non-closed parenthesis token is increment or decrement, does not modify tokens.
 fn check_for_postfix_operator(tokens: &mut Vec<Tokens>) -> Tokens {
     let mut next_token = take_token(tokens);
     let mut number_of_closed_parenthesis = 0;
@@ -468,6 +571,7 @@ fn is_binop(token: &Tokens) -> bool {
     true
 }
 
+/// Returns assigned precedence of binary tokens.
 fn precedence(next_token: &Tokens) -> i32 {
     match next_token {
         Tokens::Multiply | Tokens::Divide | Tokens::Remainder => 60,
