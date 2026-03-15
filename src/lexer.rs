@@ -40,7 +40,7 @@ pub enum Tokens {
     LogicalNOT,
     Increment,
     Decrement,
-
+    
     // Binary Operators
     Add,
     Multiply,
@@ -60,6 +60,7 @@ pub enum Tokens {
     LessOrEqual,
     GreaterOrEqual,
     Assignment,
+    Comma,
 
     // Compound Assignment Operators
     AddAssign,
@@ -75,12 +76,6 @@ pub enum Tokens {
 
     // Other
     Invalid
-}
-
-pub struct PathData {
-    pub file_stem: String,
-    pub file_parent: String,
-    pub file_path: String
 }
 
 /// Invokes lexer and returns a vector of tokens to parse.
@@ -149,7 +144,8 @@ pub fn lexer(path: &String) -> Vec<Tokens> {
         r"^<<=",
         r"^>>=",
         r"^\?",
-        r"^:"
+        r"^:",
+        r"^,",
     ];
 
     let token_set = RegexSet::new(token_patterns).unwrap();
@@ -240,6 +236,7 @@ fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>) -> (T
             "<="          => Tokens::LessOrEqual,
             ">="          => Tokens::GreaterOrEqual,
             "="           => Tokens::Assignment,
+            ","           => Tokens::Comma,
             "--"          => Tokens::Decrement,
             "++"          => Tokens::Increment,
             "+="          => Tokens::AddAssign,

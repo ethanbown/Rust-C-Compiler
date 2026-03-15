@@ -15,12 +15,12 @@ pub mod parser_ast {
 
     #[derive(Debug)]
     pub enum Program {
-        Program(FunctionDefinition)
+        Program(Vec<FunctionDeclaration>)
     }
 
-    #[derive(Debug)]
-    pub enum FunctionDefinition {
-        Function(Name, Block)
+    #[derive(Debug, Clone)]
+    pub enum FunctionDeclaration {
+        Function(Name, Vec<Identifier>, Option<Block>)
     }
 
     #[derive(Debug, Clone)]
@@ -39,7 +39,13 @@ pub mod parser_ast {
 
     #[derive(Debug, Clone)]
     pub enum Declaration {
-        Declaration(Name, Option<Init>)
+        FunDecl(FunctionDeclaration),
+        VarDecl(VariableDeclaration)
+    }
+
+    #[derive(Debug, Clone)]
+    pub enum VariableDeclaration {
+        Variable(Name, Option<Init>)
     }
 
     #[derive(Debug, Clone)]
@@ -49,7 +55,8 @@ pub mod parser_ast {
         Unary(UnaryOperator, Box<Exp>),
         Binary(BinaryOperator, Box<Exp>, Box<Exp>),
         Assignment(Box<Exp>, Box<Exp>),
-        Conditional(Box<Condition>, Box<Exp>, Box<Exp>)
+        Conditional(Box<Condition>, Box<Exp>, Box<Exp>),
+        FunctionCall(Identifier, Vec<Exp>)
     }
 
     #[derive(Debug, Clone)]
@@ -83,7 +90,7 @@ pub mod parser_ast {
 
     #[derive(Debug, Clone)]
     pub enum ForInit {
-        InitDecl(Declaration),
+        InitDecl(VariableDeclaration),
         InitExp(Option<Exp>)
     }
 
@@ -95,13 +102,14 @@ pub mod parser_ast {
 
     #[derive(Debug, Clone)]
     pub enum BlockItem {
-    S(Statement),
-    D(Declaration)
+        S(Statement),
+        D(Declaration)
     }
 }
 
 use parser_ast::Program as Program;
-use parser_ast::FunctionDefinition as FunctionDefinition;
+use parser_ast::FunctionDeclaration as FunctionDeclaration;
+use parser_ast::VariableDeclaration as VariableDeclaration;
 use parser_ast::Statement as Statement;
 use parser_ast::Exp as Exp;
 use parser_ast::UnaryOperator as UnaryOperator;
@@ -129,18 +137,60 @@ pub fn parser(tokens: &mut Vec<Tokens>) -> Program {
 
 /// Parse entire program.
 fn parse_program(tokens: &mut Vec<Tokens>) -> Program {
-    Program::Program(parse_function(tokens))
+    let mut functions: Vec<FunctionDeclaration> = Vec::new();
+
+    while tokens.len() > 0 && peek(tokens) == Tokens::Int {
+        functions.push(parse_function_declaration(tokens));
+    }
+
+    Program::Program(functions)
 }
 
-/// Parse function and function body.
-fn parse_function(tokens: &mut Vec<Tokens>) -> FunctionDefinition {
+/// Parse function declarations and function definitions
+fn parse_function_declaration(tokens: &mut Vec<Tokens>) -> FunctionDeclaration {
     // Checks for function elements surrounding body
     expected_token(Tokens::Int, tokens);
     let name = parse_identifier(tokens);
     expected_token(Tokens::OpenParenthesis, tokens);
-    expected_token(Tokens::Void, tokens);
+    let param_list = parse_param_list(tokens);
     expected_token(Tokens::ClosedParenthesis, tokens);
-    FunctionDefinition::Function(name, parse_block(tokens))
+    let next_token = peek(tokens);
+    
+    if next_token == Tokens::Semicolon {
+        expected_token(Tokens::Semicolon, tokens);
+        return FunctionDeclaration::Function(name, param_list, None);
+    }
+
+    FunctionDeclaration::Function(name, param_list, Some(parse_block(tokens)))
+}
+
+fn parse_param_list(tokens: &mut Vec<Tokens>) -> Vec<String> {
+    let mut return_val: Vec<String> = Vec::new();
+    let mut next_token = peek(tokens);
+
+    if next_token == Tokens::Void {
+        expected_token(Tokens::Void, tokens);
+        return return_val;
+    } else if next_token != Tokens::Int {
+        panic!("Empty parameter list without void keyword.")
+    } 
+
+    while next_token == Tokens::Int {
+        expected_token(Tokens::Int, tokens);
+        let identifier = parse_identifier(tokens);
+        return_val.push(identifier);
+        next_token = peek(tokens);
+        
+        if next_token == Tokens::Comma {
+            expected_token(Tokens::Comma, tokens);
+            next_token = peek(tokens);
+            if next_token != Tokens::Int {
+                panic!("trailing comma in function parameter list.");
+            }
+        }
+    } 
+
+    return_val
 }
 
 /// Handles a list of statements/declarations in compound statements and function bodies
@@ -153,7 +203,6 @@ fn parse_block(tokens: &mut Vec<Tokens>) -> Block {
         let next_block_item = parse_block_item(tokens);
         block_body.push(next_block_item);
     }
-
     take_token(tokens);
     Block::Block(block_body)
 }
@@ -178,6 +227,21 @@ fn parse_block_item(tokens: &mut Vec<Tokens>) -> BlockItem {
     } else {
         let stat = parse_statement(tokens);
         BlockItem::S(stat)
+    }
+}
+
+/// Parses declarations
+fn parse_declaration(tokens: &mut Vec<Tokens>) -> Declaration {
+    expected_token(Tokens::Int, tokens);
+    let identifier_token = take_token(tokens);
+    let check_if_function = peek(tokens);
+    return_token(tokens, identifier_token);
+    return_token(tokens, Tokens::Int);
+
+    if check_if_function == Tokens::OpenParenthesis {
+        Declaration::FunDecl(parse_function_declaration(tokens))
+    } else {
+        Declaration::VarDecl(parse_variable_declaration(tokens))
     }
 }
 
@@ -260,7 +324,7 @@ fn parse_statement(tokens: &mut Vec<Tokens>) -> Statement {
 fn parse_for_init(tokens: &mut Vec<Tokens>) -> ForInit {
     let next_token = peek(tokens);
     if next_token == Tokens::Int {
-        ForInit::InitDecl(parse_declaration(tokens))
+        ForInit::InitDecl(parse_variable_declaration(tokens))
     } else {
         let return_val = ForInit::InitExp(parse_optional_exp(tokens, Tokens::Semicolon));
         expected_token(Tokens::Semicolon, tokens);
@@ -268,8 +332,8 @@ fn parse_for_init(tokens: &mut Vec<Tokens>) -> ForInit {
     }
 }
 
-/// Parses declaration; can optionally include initialization expression.
-fn parse_declaration(tokens: &mut Vec<Tokens>) -> Declaration {
+/// Parses variable declaration; can optionally include initialization expression.
+fn parse_variable_declaration(tokens: &mut Vec<Tokens>) -> VariableDeclaration {
     expected_token(Tokens::Int, tokens);
     let identifier = parse_identifier(tokens);
 
@@ -278,10 +342,10 @@ fn parse_declaration(tokens: &mut Vec<Tokens>) -> Declaration {
         take_token(tokens);
         let exp = parse_exp(tokens, 0);
         expected_token(Tokens::Semicolon, tokens);
-        Declaration::Declaration(identifier, Some(exp))
+        VariableDeclaration::Variable(identifier, Some(exp))
     } else {
         expected_token(Tokens::Semicolon, tokens);
-        Declaration::Declaration(identifier, None)
+        VariableDeclaration::Variable(identifier, None)
     }
 }
 
@@ -343,6 +407,11 @@ fn parse_factor(tokens: &mut Vec<Tokens>) -> Exp {
                 let assign = Exp::Assignment(Box::new(Exp::Var(identifier.clone())), Box::new(Exp::Binary(BinaryOperator::Subtract, Box::new(Exp::Var(identifier.clone())), Box::new(Exp::Constant(1)))));
                 Exp::Binary(BinaryOperator::Add, Box::new(assign), Box::new(Exp::Constant(1)))
             }
+        } else if peek(tokens) == Tokens::OpenParenthesis {
+            expected_token(Tokens::OpenParenthesis, tokens);
+            let args = parse_argument_list(tokens);
+            expected_token(Tokens::ClosedParenthesis, tokens);
+            Exp::FunctionCall(identifier, args)
         } else {
             Exp::Var(identifier)
         }
@@ -369,6 +438,23 @@ fn parse_factor(tokens: &mut Vec<Tokens>) -> Exp {
     } else {
         panic!("Malformed expression: {next_token:?}")
     }
+}
+
+/// Parses argument list and returns a list of expressions
+fn parse_argument_list(tokens: &mut Vec<Tokens>) -> Vec<Exp> {
+    let mut return_val: Vec<Exp> = Vec::new();
+    let mut next_token = peek(tokens);
+
+    while next_token != Tokens::ClosedParenthesis {
+        return_val.push(parse_exp(tokens, 0));
+        next_token = peek(tokens);
+        
+        if next_token == Tokens::Comma {
+            expected_token(Tokens::Comma, tokens);
+        }
+    }
+
+    return_val
 }
 
 fn parse_int(tokens: &mut Vec<Tokens>) -> i32 {
@@ -468,6 +554,11 @@ fn take_token(tokens: &mut Vec<Tokens>) -> Tokens {
         None => panic!("No more tokens to take in take_token.")
     };
     token
+}
+
+/// Adds token back to list
+fn return_token(tokens: &mut Vec<Tokens>, token: Tokens) {
+    tokens.push(token);
 }
 
 /// Returns token at end of tokens without removal.

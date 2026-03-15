@@ -7,13 +7,13 @@ use crate::semantic_analysis::make_unique;
 pub mod tacky_ast {
     #[derive(Debug)]
     pub enum IRProgram {
-        IRProgram(IRFunctionDefinition)
+        IRProgram(Vec<IRFunctionDefinition>)
     }
 
     #[derive(Debug)]
     pub enum IRFunctionDefinition {
-        //          name,   instructions
-        IRFunction(String, Vec<IRInstructions>)
+        //          name,   params      instructions
+        IRFunction(String, Vec<String>, Vec<IRInstructions>)
     }
 
     #[derive(Debug)]
@@ -32,7 +32,9 @@ pub mod tacky_ast {
         //       condition, target
         JumpIfNotZero(Val, String),
         //   identifier
-        Label(String)
+        Label(String),
+        // fun_name,    args,   dst
+        FunCall(String, Vec<Val>, Val)
     }
 
     #[derive(Debug, Clone)]
@@ -88,20 +90,37 @@ pub fn tacky(ast: &Program, counter: &mut UniqueCounter) -> IRProgram {
 
 /// Parses the main function in the program.
 fn ir_parse_program(ast: &Program, counter: &mut UniqueCounter) -> IRProgram {
-    let return_val = match ast {
-        Program::Program(inner) => ir_parse_function(inner, counter)
-    };
+    let mut return_val: Vec<IRFunctionDefinition> = Vec::new(); 
+    
+    match ast {
+        Program::Program(functions) => {
+            for function in functions {
+                if ir_check_body_is_some(function) {
+                    return_val.push(ir_parse_function(function, counter));
+                }
+            }
+        }
+    }
     IRProgram::IRProgram(return_val)
 }
 
+fn ir_check_body_is_some(ast: &FunctionDeclaration) -> bool {
+    match ast {
+        FunctionDeclaration::Function(_, _, body) => body.is_some()
+    }
+}
+
 /// Parses function and function body, returning an IR function.
-fn ir_parse_function(ast: &FunctionDefinition, counter: &mut UniqueCounter) -> IRFunctionDefinition {
-    let (name, mut instructions) = match ast {
-        FunctionDefinition::Function(name, body) => (name.to_string(), ir_parse_block(&body, counter, name.to_string()))
+fn ir_parse_function(ast: &FunctionDeclaration, counter: &mut UniqueCounter) -> IRFunctionDefinition {
+    let (name, param_list, mut instructions) = match ast {
+        FunctionDeclaration::Function(name, param_list, body) => {
+            let new_body = ir_parse_block(&body.clone().unwrap(), counter, name.to_string());
+            (name.clone(), param_list.clone(), new_body)
+        }
     };
 
     instructions.push(IRInstructions::Return(Val::Constant(0)));
-    IRFunctionDefinition::IRFunction(name, instructions)
+    IRFunctionDefinition::IRFunction(name, param_list, instructions)
 }
 
 /// Passes vector of instruction on
@@ -129,7 +148,15 @@ fn ir_parse_block_items(body: &Vec<BlockItem>, counter: &mut UniqueCounter, name
 
 fn ir_parse_declaration(decl: &Declaration, instructions: &mut Vec<IRInstructions>, counter: &mut UniqueCounter) {
     match decl {
-        Declaration::Declaration(name, init) => {
+        Declaration::VarDecl(var_decl) => ir_parse_variable_declaration(var_decl, instructions, counter),
+        // Can be skipped since only function declarations can appear inside blocks
+        Declaration::FunDecl(_) => ()
+    }   
+}
+
+fn ir_parse_variable_declaration(decl: &VariableDeclaration, instructions: &mut Vec<IRInstructions>, counter: &mut UniqueCounter) {
+    match decl {
+        VariableDeclaration::Variable(name, init) => {
             if init.is_some() {
                 let copy = init.clone();
 
@@ -255,7 +282,7 @@ fn ir_parse_instructions(ast: &Statement, counter: &mut UniqueCounter, name: &St
 
 fn ir_parse_for_init(ast: &ForInit, instructions: &mut Vec<IRInstructions>, counter: &mut UniqueCounter, name: &String) {
     match ast {
-        ForInit::InitDecl(decl) => ir_parse_declaration(decl, instructions, counter),
+        ForInit::InitDecl(decl) => ir_parse_variable_declaration(decl, instructions, counter),
         ForInit::InitExp(exp)   => {
             if exp.is_some() {
                 let exp = exp.clone().unwrap();
@@ -352,6 +379,18 @@ fn emit_tacky(ast: &Exp, instructions: &mut Vec<IRInstructions>, counter: &mut U
             instructions.push(IRInstructions::Label(end_label));
 
             Val::Var(result_name)
+        },
+        Exp::FunctionCall(name, args) => {
+            let mut new_args: Vec<Val> = Vec::new();
+            let dst_name = make_unique(name, UniqueType::Temporary, counter);
+            let dst = Val::Var(dst_name);
+
+            for arg in args {
+                new_args.push(emit_tacky(arg, instructions, counter, name));
+            }
+
+            instructions.push(IRInstructions::FunCall(name.clone(), new_args, dst.clone()));
+            dst
         }
 
     }

@@ -1,14 +1,10 @@
-use std::{env::{self},
-          fs::{self, File},
-          io::{Write},
-          path::Path,
-          process::Command};
+use std::{collections::HashMap, env::{self}, fs::{self, File}, io::Write, path::Path, process::Command};
 
 use crate::{assembly::{assembly as assembly, assembly_ast::AssemblyProgram}, 
             code_emission::code_emission as code_emission, 
-            lexer::{PathData as PathData, Tokens as Tokens, lexer as lexer}, 
+            lexer::{Tokens as Tokens, lexer as lexer}, 
             parser::{parser as parser, parser_ast::Program}, 
-            semantic_analysis::{UniqueCounter, create_counter, semantic_analysis}, 
+            semantic_analysis::{UniqueCounter, TypeData, create_counter, semantic_analysis}, 
             tacky::{tacky as tacky, tacky_ast::IRProgram}};
 
 enum CompilerFlags {
@@ -18,8 +14,15 @@ enum CompilerFlags {
     StopAtTacky,
     StopAtCodeGen,
     StopAtAssembly,
+    SkipLinker,
 
     InvalidFlag
+}
+
+struct PathData {
+    pub file_stem: String,
+    pub file_parent: String,
+    pub file_path: String
 }
 
 /// Starts the compiler based on command-line arguments.
@@ -27,14 +30,14 @@ pub fn compiler_driver() {
     let args : Vec<String> = env::args().collect();
     match args.len() {
         1 => panic!("rcc: no input files"),
-        2 => create_executable(Path::new(&args[1])),
-        3 => stop_early(Path::new(&args[2]), get_compiler_flag(&args[1].as_str())),
+        2 => create_executable(Path::new(&args[1]), true),
+        3 => handle_flag(Path::new(&args[2]), get_compiler_flag(&args[1].as_str())),
         _ => panic!("rcc: more than two arguments were passed")
     }
 }
 
 /// Returns a PathData struct based on given path.
-pub fn create_pathdata(path: &Path) -> PathData {
+fn create_pathdata(path: &Path) -> PathData {
     let file_stem = path
         .file_stem()
         .unwrap()
@@ -62,11 +65,11 @@ pub fn create_pathdata(path: &Path) -> PathData {
 }
 
 /// Creates an executable based on the code given at path.
-fn create_executable(path: &Path) {
+fn create_executable(path: &Path, invoke_linker: bool) {
     let path_data = create_pathdata(path);
     run_preprocessor(&path_data);
     compile_preprocessed_file(&path_data, path);
-    assemble_and_link_file(&path_data);
+    assemble_and_link_file(&path_data, invoke_linker);
 }
 
 /// Reads flag given as first argument which determines where to stop in the compilation process.
@@ -78,6 +81,7 @@ fn get_compiler_flag(flag: &str) -> CompilerFlags {
         "--tacky"    => CompilerFlags::StopAtTacky,
         "--codegen"  => CompilerFlags::StopAtCodeGen,
         "-S"         => CompilerFlags::StopAtAssembly,
+        "-c"         => CompilerFlags::SkipLinker,
         _            => {
             eprintln!("rcc: invalid flag passed: '{}'\nList of valid flags to stop compilation after:
                        \n--lex:\t\tLexing the input.
@@ -92,8 +96,9 @@ fn get_compiler_flag(flag: &str) -> CompilerFlags {
     }
 }
 
-/// Stops at compiler stage based on flag and prints completion message to stdout.
-fn stop_early(path: &Path, flag: CompilerFlags) {
+/// Stops at compiler stage or skips linker based on flag 
+/// and prints completion message to stdout.
+fn handle_flag(path: &Path, flag: CompilerFlags) {
     match flag {
         CompilerFlags::InvalidFlag     => (),
         CompilerFlags::StopAtLex       => {
@@ -120,6 +125,9 @@ fn stop_early(path: &Path, flag: CompilerFlags) {
             stop_at_assembly(path);
             println!("Stopped after assembly generation!");
         },
+        CompilerFlags::SkipLinker      => {
+            create_executable(path, false);
+        }
     }
 }
 
@@ -138,22 +146,23 @@ pub fn stop_at_parse(path: &Path) -> Program {
 }
 
 /// Returns a transformed AST to convert to TACKY IR and UniqueCounter for creating unique temporary/label names.
-pub fn stop_at_semantic(path: &Path) -> (Program, UniqueCounter) {
+pub fn stop_at_semantic(path: &Path) -> (Program, HashMap<String, TypeData>, UniqueCounter) {
     let ast = stop_at_parse(path);
     let mut counter = create_counter();
-    (semantic_analysis(&ast, &mut counter), counter)
+    let (program, symbols) = semantic_analysis(&ast, &mut counter);
+    (program, symbols, counter)
 }
 
 /// Returns an IR of the program to turn into an assembly AST.
-pub fn stop_at_tacky(path: &Path) -> IRProgram {
-    let (transformed_ast, mut counter) = stop_at_semantic(path);
-    tacky(&transformed_ast, &mut counter)
+pub fn stop_at_tacky(path: &Path) -> (IRProgram, HashMap<String, TypeData>) {
+    let (transformed_ast, symbols, mut counter) = stop_at_semantic(path);
+    (tacky(&transformed_ast, &mut counter), symbols)
 }
 
 /// Returns an assembly AST to turn into assembly and write to a .s file.
-pub fn stop_at_codegen(path: &Path) -> AssemblyProgram {
-    let tacky_ast = stop_at_tacky(path);
-    assembly(&tacky_ast)
+pub fn stop_at_codegen(path: &Path) -> (AssemblyProgram, HashMap<String, TypeData>) {
+    let (tacky_ast, symbols) = stop_at_tacky(path);
+    (assembly(&tacky_ast), symbols)
 }
 
 /// Generates assembly and writes to a .s file.
@@ -164,7 +173,7 @@ pub fn stop_at_assembly(path: &Path) {
 }
 
 /// Invokes gcc to run preprocessor and produce .i file to use during compilation.
-pub fn run_preprocessor(pd : &PathData) {
+fn run_preprocessor(pd : &PathData) {
     let preprocessed_file_path = get_preprocessed_file_path(pd);
 
     Command::new("gcc")
@@ -174,13 +183,13 @@ pub fn run_preprocessor(pd : &PathData) {
 }
 
 /// Runs custom c compiler and writes assembly to temporary .s file.
-pub fn compile_preprocessed_file(pd: &PathData, path: &Path) {
+fn compile_preprocessed_file(pd: &PathData, path: &Path) {
     let file_path_i = get_preprocessed_file_path(&pd);
     let file_path_s = get_assembly_file_path(&pd);
 
     // Start of compilation
-    let binary_ast = stop_at_codegen(path);
-    let assembly_content = code_emission(&binary_ast);
+    let (binary_ast, symbols) = stop_at_codegen(path);
+    let assembly_content = code_emission(&binary_ast, &symbols);
 
     let mut assembly_file = File::create(file_path_s).expect("rcc: failed to create assembly file");
     assembly_file.write_all(assembly_content.as_bytes()).expect("rcc: failed to write assembly in compile_preprocessed_file");
@@ -189,11 +198,19 @@ pub fn compile_preprocessed_file(pd: &PathData, path: &Path) {
 }
 
 /// Assembles and links .s file into executable.
-pub fn assemble_and_link_file(pd: &PathData) {
+fn assemble_and_link_file(pd: &PathData, invoke_linker: bool) {
     let file_path_s = get_assembly_file_path(&pd);
-    let executable_path= get_file_path(&pd);
+    let mut path= get_file_path(&pd);
+    let args = 
+    if invoke_linker {
+        vec!(&file_path_s, "-o", &path)
+    } else {
+        path = get_object_file_path(&pd);
+        vec!("-c", &file_path_s, "-o", &path)
+    };
+
     Command::new("gcc")
-        .args([&file_path_s, "-o", &executable_path])
+        .args(args)
         .output()
         .expect("Failure to create {file_stem}.exe");
 
@@ -210,6 +227,12 @@ fn get_preprocessed_file_path(pd: &PathData) -> String {
 fn get_assembly_file_path(pd: &PathData) -> String {
     let path = get_file_path(&pd);
     path + ".s"
+}
+
+/// Returns object file path.
+fn get_object_file_path(pd: &PathData) -> String {
+    let path = get_file_path(&pd);
+    path + ".o"
 }
 
 /// Gets file path without extension.

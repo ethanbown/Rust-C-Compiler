@@ -1,23 +1,43 @@
-use crate::assembly::assembly_ast::*;
+use std::{collections::HashMap};
 
-pub fn code_emission(binary_ast: &AssemblyProgram) -> String {
-    emission_program(&binary_ast)
+use crate::assembly::assembly_ast::*;
+use super::semantic_analysis::TypeData as TypeData;
+
+enum RegType {
+    // Double Word
+    DW,
+    // Word
+    W,
+    // Byte
+    B,
 }
 
-fn emission_program(binary_ast: &AssemblyProgram) -> String {
-    let data = match binary_ast {
-        AssemblyProgram::Program(inner) => emission_function(inner),
+pub fn code_emission(binary_ast: &AssemblyProgram, symbols: &HashMap<String, TypeData>) -> String {
+    emission_program(&binary_ast, symbols)
+}
+
+fn emission_program(binary_ast: &AssemblyProgram, symbols: &HashMap<String, TypeData>) -> String {
+    let mut data = String::new();
+    
+    match binary_ast {
+        AssemblyProgram::Program(inner) => {
+            for function in inner {
+                data += &emission_function(function, symbols);
+                data += "\n";
+            }
+        }
     };
+
     data + "\n.section .note.GNU-stack,\"\",@progbits\n"
 }
 
-fn emission_function(binary_ast: &AssemblyFunctionDefinition) -> String {
+fn emission_function(binary_ast: &AssemblyFunctionDefinition, symbols: &HashMap<String, TypeData>) -> String {
     let data = match binary_ast {
         AssemblyFunctionDefinition::AssemblyFunction(name, inst) => {
             let mut str = String::from("\t.globl ") + name + "\n" + name + ":\n";
             str += "\tpushq\t%rbp\n";
             str += "\tmovq\t%rsp, %rbp\n\n";
-            let inst = emission_instructions(&inst);
+            let inst = emission_instructions(&inst, symbols);
             str += &inst;
             str
         }
@@ -25,21 +45,15 @@ fn emission_function(binary_ast: &AssemblyFunctionDefinition) -> String {
     data
 }
 
-fn emission_instructions(binary_ast: &Vec<Instructions>) -> String {
+fn emission_instructions(binary_ast: &Vec<Instructions>, symbols: &HashMap<String, TypeData>) -> String {
     let mut data = String::new();
     
     for inst in binary_ast {
         match inst {
             Instructions::Mov(src, dst) => {
-                let is_cl = destination_is_cl(&dst);
-                let src = emission_operand(&src, false);
-                let dst = emission_operand(&dst, false);
-                data += 
-                    if is_cl {  
-                        "\tmovb\t"
-                    } else {
-                        "\tmovl\t"
-                    };
+                let src = emission_operand(&src, &RegType::W);
+                let dst = emission_operand(&dst, &RegType::W);
+                data += "\tmovl\t";
                 data += &src;
                 data += ", ";
                 data += &dst;
@@ -52,7 +66,7 @@ fn emission_instructions(binary_ast: &Vec<Instructions>) -> String {
             },
             Instructions::Unary(unary_operator, operand) => {
                 emission_unary_operators(unary_operator, &mut data);
-                let operand = emission_operand(operand, false);
+                let operand = emission_operand(operand, &RegType::W);
                 data += &operand;
                 data += "\n";
             },
@@ -61,25 +75,41 @@ fn emission_instructions(binary_ast: &Vec<Instructions>) -> String {
                 data += int.to_string().as_str();
                 data += ", %rsp\n";
             },
+            Instructions::DeallocateStack(int) => {
+                data += "\taddq\t$";
+                data += int.to_string().as_str();
+                data += ", %rsp\n";
+            },
+            Instructions::Push(op) => {
+                let op = emission_operand(op, &RegType::DW);
+                data += "\tpushq\t";
+                data += op.to_string().as_str();
+                data += "\n";
+            }
             Instructions::Binary(binary_operator, src, dst) => {
                 emission_binary_operators(binary_operator, &mut data);
-                let src = emission_operand(src, false);
-                let dst = emission_operand(dst, false);
+                let reg_type = match binary_operator {
+                    AssemblyBinaryOperator::LeftShift
+                    | AssemblyBinaryOperator::RightShift => RegType::B,
+                    _ => RegType::W
+                };
+                let src = emission_operand(src, &reg_type);
+                let dst = emission_operand(dst, &RegType::W);
                 data += &src;
                 data += ", ";
                 data += &dst;
                 data += "\n";
             },
             Instructions::Idiv(operand) => {
-                let operand = emission_operand(operand, false);
+                let operand = emission_operand(operand, &RegType::W);
                 data += "\tidivl\t";
                 data += &operand;
                 data += "\n";
             },
             Instructions::Cdq => data += "\tcdq\t\n",
             Instructions::Cmp(op1, op2) => {
-                let op1 = emission_operand(op1, false);
-                let op2 = emission_operand(op2, false);
+                let op1 = emission_operand(op1, &RegType::W);
+                let op2 = emission_operand(op2, &RegType::W);
                 data += "\tcmpl\t";
                 data += &op1;
                 data += ", ";
@@ -100,7 +130,7 @@ fn emission_instructions(binary_ast: &Vec<Instructions>) -> String {
                 data += "\n";
             }
             Instructions::SetCC(cond_code, operand) => {
-                let operand = emission_operand(operand, true);
+                let operand = emission_operand(operand, &RegType::B);
                 let cond_code = emission_condition_code(cond_code);
                 data += "\tset";
                 data += &cond_code;
@@ -112,7 +142,23 @@ fn emission_instructions(binary_ast: &Vec<Instructions>) -> String {
                 data += ".L";
                 data += &label;
                 data += ":\n";
-            }
+            },
+            Instructions::Call(label) => {
+                data += "\tcall\t";
+                data += &label;
+                
+                let vardata = match symbols.get(label) {
+                    Some(data) => data,
+                    None                 => panic!("Issue calling {label}")
+                };
+
+                if !vardata.defined {
+                    data += "@PLT";
+                }
+
+                data += "\n";
+            },
+
         }
     }
 
@@ -139,19 +185,16 @@ fn emission_binary_operators(binary_operator: &AssemblyBinaryOperator, data: &mu
     }
 }
 
-fn emission_operand(binary_ast: &Operand, is_setcc: bool) -> String {
+fn emission_operand(binary_ast: &Operand, reg_type: &RegType) -> String {
     let data = match binary_ast {
         Operand::Imm(num) => {
             "$".to_string() + num.to_string().as_str()
         },
-        Operand::Reg(register) => {
-            if is_setcc {
-                emission_byte_registers(register)
-            }           
-            else {
-                emission_doubleword_registers(register)
-            }
-        },
+        Operand::Reg(register) => match reg_type {
+                RegType::DW => emission_doubleword_registers(register),
+                RegType::W  => emission_word_registers(register),
+                RegType::B  => emission_byte_registers(register),
+            },
         Operand::Stack(int) => {
             int.to_string() + "(%rbp)"
         },
@@ -163,21 +206,43 @@ fn emission_operand(binary_ast: &Operand, is_setcc: bool) -> String {
 
 fn emission_doubleword_registers(register: &Reg) -> String {
     match register {
+        Reg::AX   => "%rax".to_string(),
+        Reg::CX   => "%rcx".to_string(),
+        Reg::DX   => "%rdx".to_string(),
+        Reg::DI   => "%rdi".to_string(),
+        Reg::SI   => "%rsi".to_string(),
+        Reg::R8   => "%r8".to_string(),
+        Reg::R9   => "%r9".to_string(),
+        Reg::R10  => "%r10".to_string(),
+        Reg::R11  => "%r11".to_string(),
+    }
+}
+
+fn emission_word_registers(register: &Reg) -> String {
+     match register {
         Reg::AX   => "%eax".to_string(),
+        Reg::CX   => "%ecx".to_string(),
         Reg::DX   => "%edx".to_string(),
+        Reg::DI   => "%edi".to_string(),
+        Reg::SI   => "%esi".to_string(),
+        Reg::R8   => "%r8d".to_string(),
+        Reg::R9   => "%r9d".to_string(),
         Reg::R10  => "%r10d".to_string(),
         Reg::R11  => "%r11d".to_string(),
-        Reg::CL   => "%cl".to_string()
     }
 }
 
 fn emission_byte_registers(register: &Reg) -> String {
     match register {
         Reg::AX   => "%al".to_string(),
+        Reg::CX   => "%cl".to_string(),
         Reg::DX   => "%dl".to_string(),
+        Reg::DI   => "%dil".to_string(),
+        Reg::SI   => "%sil".to_string(),
+        Reg::R8   => "%r8b".to_string(),
+        Reg::R9   => "%r9b".to_string(),
         Reg::R10  => "%r10b".to_string(),
         Reg::R11  => "%r11b".to_string(),
-        Reg::CL   => "%cl".to_string()
     }
 }
 
@@ -189,17 +254,5 @@ fn emission_condition_code(cond_code: &ConditionCode) -> String {
         ConditionCode::GE  => "ge".to_string(),
         ConditionCode::L   => "l".to_string(),
         ConditionCode::LE  => "le".to_string(),
-    }
-}
-
-fn destination_is_cl(binary_ast: &Operand) -> bool {
-    match binary_ast {
-        Operand::Reg(register) => {
-            match register {
-                Reg::CL => true,
-                _ => false
-            }
-        }
-        _ => false,
     }
 }
