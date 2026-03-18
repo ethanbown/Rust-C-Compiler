@@ -33,6 +33,8 @@ pub enum Tokens {
     For,
     Break,
     Continue,
+    Static,
+    Extern,
 
     // Unary Operators
     Negation,
@@ -105,6 +107,8 @@ pub fn lexer(path: &String) -> Vec<Tokens> {
         r"^for",
         r"^break",
         r"^continue",
+        r"^static",
+        r"^extern",
         r"^\(",
         r"^\)",
         r"^\{",
@@ -208,6 +212,8 @@ fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>) -> (T
             "for"         => Tokens::For,
             "break"       => Tokens::Break,
             "continue"    => Tokens::Continue,    
+            "static"      => Tokens::Static,
+            "extern"      => Tokens::Extern,
             "("           => Tokens::OpenParenthesis,
             ")"           => Tokens::ClosedParenthesis,
             "{"           => Tokens::OpenCurlyBrace,

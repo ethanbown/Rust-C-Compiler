@@ -1,6 +1,6 @@
 use std::{collections::HashMap};
 
-use crate::assembly::assembly_ast::*;
+use crate::{assembly::assembly_ast::*, semantic_analysis::IdentifierAttr};
 use super::semantic_analysis::TypeData as TypeData;
 
 enum RegType {
@@ -21,8 +21,8 @@ fn emission_program(binary_ast: &AssemblyProgram, symbols: &HashMap<String, Type
     
     match binary_ast {
         AssemblyProgram::Program(inner) => {
-            for function in inner {
-                data += &emission_function(function, symbols);
+            for top_level in inner {
+                data += &emission_top_level(top_level, symbols);
                 data += "\n";
             }
         }
@@ -31,14 +31,59 @@ fn emission_program(binary_ast: &AssemblyProgram, symbols: &HashMap<String, Type
     data + "\n.section .note.GNU-stack,\"\",@progbits\n"
 }
 
-fn emission_function(binary_ast: &AssemblyFunctionDefinition, symbols: &HashMap<String, TypeData>) -> String {
+fn emission_top_level(binary_ast: &AssemblyTopLevel, symbols: &HashMap<String, TypeData>) -> String {
     let data = match binary_ast {
-        AssemblyFunctionDefinition::AssemblyFunction(name, inst) => {
-            let mut str = String::from("\t.globl ") + name + "\n" + name + ":\n";
+        AssemblyTopLevel::AssemblyFunction(name, global, inst) => {
+            let mut str = String::from("\t");
+            if *global {
+                str += ".globl "; 
+                str += name;
+                str += "\n";
+            }
+            str += "\t.text\n";
+            str += name;
+            str += ":\n";
             str += "\tpushq\t%rbp\n";
             str += "\tmovq\t%rsp, %rbp\n\n";
             let inst = emission_instructions(&inst, symbols);
             str += &inst;
+            str
+        },
+        AssemblyTopLevel::AssemblyStaticVariable(identifier, global, init) => {
+            let mut str = String::from("");
+            if *global {
+                str += "\t.globl ";
+                str += identifier;
+                str += "\n";
+                if *init != 0 {
+                    str += "\t.data\n\t.align 4\n";
+                    str += identifier;
+                    str += ":\n";
+                    str += "\t.long ";
+                    str += init.to_string().as_str();
+                    str += "\n";
+                } else {
+                    str += "\t.bss\n\t.align 4\n";
+                    str += identifier;
+                    str += ":\n";
+                    str += "\t.zero 4\n";
+                }
+            } else {
+                if *init != 0 {
+                    str += "\t.data\n\t.align 4\n";
+                    str += identifier;
+                    str += ":\n";
+                    str += "\t.long ";
+                    str += init.to_string().as_str();
+                    str += "\n";
+                } else {
+                    str += "\t.bss\n\t.align 4\n";
+                    str += identifier;
+                    str += ":\n";
+                    str += "\t.zero 4\n";
+                }
+            }
+
             str
         }
     };
@@ -152,7 +197,12 @@ fn emission_instructions(binary_ast: &Vec<Instructions>, symbols: &HashMap<Strin
                     None                 => panic!("Issue calling {label}")
                 };
 
-                if !vardata.defined {
+                let defined = match vardata.attrs {
+                    IdentifierAttr::FunAttr(defined, _, _) => defined,
+                    _                                            => panic!("Calling non-function")
+                };
+
+                if !defined {
                     data += "@PLT";
                 }
 
@@ -198,7 +248,10 @@ fn emission_operand(binary_ast: &Operand, reg_type: &RegType) -> String {
         Operand::Stack(int) => {
             int.to_string() + "(%rbp)"
         },
-        Operand::Pseudo(_) => panic!("emission_operand shouldn't have pseudo operands")
+        Operand::Data(name)   => {
+            name.clone() + "(%rip)".to_string().as_str()
+        },
+        Operand::Pseudo(_) => panic!("emission_operand shouldn't have pseudo operands"),
     };
 
     data

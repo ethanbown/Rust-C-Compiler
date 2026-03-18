@@ -21,13 +21,35 @@ struct VarData {
 #[derive(Debug)]
 pub struct TypeData {
     pub dtype: Type,
-    pub defined: bool,
-    pub param_count: usize
+    pub attrs: IdentifierAttr
 }
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
     Int,
     FunType(usize)
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Scope {
+    File,
+    Block
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum IdentifierAttr {
+    //   defined, global, param_count
+    FunAttr(bool, bool, usize),
+    //    initial_value,   global
+    StaticAttr(InitialValue, bool),
+    LocalAttr
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum InitialValue {
+    Tentative,
+    NoInitializer,
+    Initial(i32)
 }
 
 /// Invokes the semantic analysis phase and returns an updated AST.
@@ -53,25 +75,36 @@ pub fn create_counter() -> UniqueCounter {
     UniqueCounter { temporary_count: 0, label_count: 0 }
 }
 
+/// Makes a unique name by combining the given name with . and a number from counter. 
+/// Ex: main => main.1
+pub fn make_unique(name: &String, utype: UniqueType, counter: &mut UniqueCounter) -> String {
+    let mut unique = String::new();
+    unique += name.clone().as_str();
+    unique += ".";
+    if utype == UniqueType::Temporary {
+        unique += make_temporary(counter).as_str()
+    } else {
+        unique += make_label(counter).as_str()
+    }
+    unique
+}
+
 fn create_vardata(unique_name: &String, from_current_scope: bool, has_linkage: bool) -> VarData {
     VarData { new_name: unique_name.clone(), from_current_scope: from_current_scope, has_linkage: has_linkage }
 }
 
 fn resolve_program(ast: &Program, identifier_map: &mut HashMap<String, VarData>, counter: &mut UniqueCounter) -> Program {
+    let mut new_declarations: Vec<Declaration> = Vec::new();
+
     match ast {
-        Program::Program(func) => Program::Program(resolve_function(func, identifier_map, counter))
-    }
-}
-
-/// Resolves function by resolving function block body
-fn resolve_function(functions: &Vec<FunctionDeclaration>, identifier_map: &mut HashMap<String, VarData>, counter: &mut UniqueCounter) -> Vec<FunctionDeclaration> {
-    let mut return_val = Vec::new();
-    
-    for function in functions {
-        return_val.push(resolve_function_declaration(function, identifier_map, counter));
+        Program::Program(declarations) => {
+            for decl in declarations {
+                new_declarations.push(resolve_declaration(decl, identifier_map, counter, &Scope::File))
+            }
+        }
     }
 
-    return_val
+    Program::Program(new_declarations)
 }
 
 /// Resolves block items inside block
@@ -87,43 +120,74 @@ fn resolve_block_item(block_items: &Vec<BlockItem>, identifier_map: &mut HashMap
     let mut new_items: Vec<BlockItem> = Vec::new();
     for item in block_items {
         match item {
-            BlockItem::D(decl) => new_items.push(BlockItem::D(resolve_declaration(decl, identifier_map, counter))),
+            BlockItem::D(decl) => new_items.push(BlockItem::D(resolve_declaration(decl, identifier_map, counter, &Scope::Block))),
             BlockItem::S(stat) => new_items.push(BlockItem::S(resolve_statement(stat, identifier_map, counter)))
         }
     }
     new_items
 }
 
-fn resolve_declaration(decl: &Declaration, identifier_map: &mut HashMap<String, VarData>, counter: &mut UniqueCounter) -> Declaration {
+fn resolve_declaration(decl: &Declaration, identifier_map: &mut HashMap<String, VarData>, counter: &mut UniqueCounter, scope: &Scope) -> Declaration {
     match decl {
-        Declaration::VarDecl(var_decl) => Declaration::VarDecl(resolve_variable_declaration(var_decl, identifier_map, counter)),
+        Declaration::VarDecl(var_decl) => {
+            if *scope == Scope::File {
+                Declaration::VarDecl(resolve_file_scope_variable_declaration(var_decl, identifier_map))
+            } else {
+                Declaration::VarDecl(resolve_local_variable_declaration(var_decl, identifier_map, counter))
+            }
+        },
         Declaration::FunDecl(fun_decl) => {
             match fun_decl {
-                FunctionDeclaration::Function(_, _, body) => {
-                    if body.is_some() {
-                        panic!("Local function declaration has a body");
+                FunctionDeclaration::Function(name, _, body, _) => {
+                    if *scope == Scope::Block && body.is_some() {
+                        panic!("Local function declaration {name} has a body");
                     }
                 },
             }
 
-            Declaration::FunDecl(resolve_function_declaration(fun_decl, identifier_map, counter))
+            Declaration::FunDecl(resolve_function_declaration(fun_decl, identifier_map, counter, scope))
         }
     }
 }
+
+/// Resolves file level variable declarations
+fn resolve_file_scope_variable_declaration(decl: &VariableDeclaration, identifier_map: &mut HashMap<String, VarData>) -> VariableDeclaration {
+    let name = match decl {
+        VariableDeclaration::Variable(n, _, _) => n
+     };
+
+    identifier_map.insert(name.clone(), create_vardata(&name.clone(), true, true));
+    decl.clone()
+}
+
 /// Checks if declaration name has been used before in this block, and if so, rejects.
 /// Otherwise, adds new name to map and resolves init exp if present.
-fn resolve_variable_declaration(decl: &VariableDeclaration, identifier_map: &mut HashMap<String, VarData>, counter: &mut UniqueCounter) -> VariableDeclaration {
-    let (name, init) = match decl {
-        VariableDeclaration::Variable(n, i) => (n, i)
+fn resolve_local_variable_declaration(decl: &VariableDeclaration, identifier_map: &mut HashMap<String, VarData>, counter: &mut UniqueCounter) -> VariableDeclaration {
+    let (name, init, storage_class) = match decl {
+        VariableDeclaration::Variable(n, i, s) => (n, i, s)
     };
 
-    let unique_name = resolve_name(&name, identifier_map, counter, false);
-
-    if init.is_some() {
-        let init = resolve_exp(&init.clone().unwrap(), identifier_map);
-        VariableDeclaration::Variable(unique_name, Some(init.clone()))
+    if identifier_map.contains_key(name) {
+        let prev_entry = identifier_map.get(name).unwrap();
+        if prev_entry.from_current_scope {
+            if !(prev_entry.has_linkage && *storage_class.as_ref().unwrap() == StorageClass::Extern) {
+                panic!("Conflicting local declarations of {name}");
+            }
+        }
+    }
+    
+    if storage_class.is_some() && *storage_class.as_ref().unwrap() == StorageClass::Extern {
+        identifier_map.insert(name.clone(), create_vardata(&name.clone(), true, true));
+        VariableDeclaration::Variable(name.clone(), init.clone(), storage_class.clone())
     } else {
-        VariableDeclaration::Variable(unique_name, init.clone())
+        let unique_name = resolve_name(&name, identifier_map, counter, false);
+
+        if init.is_some() {
+            let init = resolve_exp(&init.clone().unwrap(), identifier_map);
+            VariableDeclaration::Variable(unique_name, Some(init.clone()), storage_class.clone())
+        } else {
+            VariableDeclaration::Variable(unique_name, init.clone(), storage_class.clone())
+        }   
     }
 }
 
@@ -139,11 +203,15 @@ fn resolve_name(name: &String, identifier_map: &mut HashMap<String, VarData>, co
 }
 
 /// Resolves function declarations
-fn resolve_function_declaration(decl: &FunctionDeclaration, identifier_map: &mut HashMap<String, VarData>, counter: &mut UniqueCounter) -> FunctionDeclaration {
-    let (name, params, body) =
+fn resolve_function_declaration(decl: &FunctionDeclaration, identifier_map: &mut HashMap<String, VarData>, counter: &mut UniqueCounter, scope: &Scope) -> FunctionDeclaration {
+    let (name, params, body, storage_class) =
         match decl {
-            FunctionDeclaration::Function(name, params, body) => (name, params, body)
+            FunctionDeclaration::Function(name, params, body, storage_class) => (name, params, body, storage_class)
         };
+
+    if (storage_class.is_some() && *storage_class.as_ref().unwrap() == StorageClass::Static) && *scope == Scope::Block {
+        panic!("Block scope function has static specifier");
+    }
     
     if identifier_map.contains_key(name) {
         let prev_entry = identifier_map.get(name).unwrap();
@@ -166,7 +234,7 @@ fn resolve_function_declaration(decl: &FunctionDeclaration, identifier_map: &mut
         new_body = resolve_block(body, &mut inner_map, counter);
     }
 
-    FunctionDeclaration::Function(name.clone(), new_params, new_body)
+    FunctionDeclaration::Function(name.clone(), new_params, new_body, storage_class.clone())
 }
 
 fn resolve_param(name: &String, identifier_map: &mut HashMap<String, VarData>, counter: &mut UniqueCounter) -> String {
@@ -269,7 +337,7 @@ fn resolve_optional_box_statement(statement: &Option<Box<Statement>>, identifier
 fn resolve_for_init(init: &ForInit, identifier_map: &mut HashMap<String, VarData>, counter: &mut UniqueCounter) -> ForInit {
     match init {
         ForInit::InitExp(e)  => ForInit::InitExp(resolve_optional_exp(e, identifier_map)),
-        ForInit::InitDecl(d) => ForInit::InitDecl(resolve_variable_declaration(d, identifier_map, counter))
+        ForInit::InitDecl(d) => ForInit::InitDecl(resolve_local_variable_declaration(d, identifier_map, counter))
     }
 }
 
@@ -278,20 +346,6 @@ fn is_not_a_var_node(exp: &Box<Exp>) -> bool {
         Exp::Var(_) => false,
         _ => true
     }
-}
-
-/// Makes a unique name by combining the given name with . and a number from counter. 
-/// Ex: main => main.1
-pub fn make_unique(name: &String, utype: UniqueType, counter: &mut UniqueCounter) -> String {
-    let mut unique = String::new();
-    unique += name.clone().as_str();
-    unique += ".";
-    if utype == UniqueType::Temporary {
-        unique += make_temporary(counter).as_str()
-    } else {
-        unique += make_label(counter).as_str()
-    }
-    unique
 }
 
 /// Helper for make_unique
@@ -324,21 +378,28 @@ fn copy_identifier_map(identifier_map: &mut HashMap<String, VarData>) -> HashMap
 /// by deciding what loop they're associated with.
 fn label_program(transformed_ast: &Program, counter: &mut UniqueCounter, label: &Option<String>) -> Program {
     match transformed_ast {
-        Program::Program(function) => Program::Program(label_function(function, counter, label))
+        Program::Program(declarations) => Program::Program(label_declaration(declarations, counter, label))
     }
 }
 
-fn label_function(functions: &Vec<FunctionDeclaration>, counter: &mut UniqueCounter, label: &Option<String>) -> Vec<FunctionDeclaration> {
-    let mut return_val: Vec<FunctionDeclaration> = Vec::new();
+fn label_declaration(declarations: &Vec<Declaration>, counter: &mut UniqueCounter, label: &Option<String>) -> Vec<Declaration> {
+    let mut return_val: Vec<Declaration> = Vec::new();
 
-    for function in functions {
-        match function {
-            FunctionDeclaration::Function(name, params, body) => 
-                return_val.push(FunctionDeclaration::Function(name.clone(), params.clone(), label_block(body, counter, label)))
+    for decl in declarations {
+        match decl {
+            Declaration::FunDecl(function) => return_val.push(Declaration::FunDecl(label_function(function, counter, label))),
+            Declaration::VarDecl(var_decl) => return_val.push(Declaration::VarDecl(var_decl.clone()))
         }
     }
 
     return_val
+}
+
+fn label_function(function: &FunctionDeclaration, counter: &mut UniqueCounter, label: &Option<String>) -> FunctionDeclaration {
+    match function {
+        FunctionDeclaration::Function(name, params, body, storage_class) => 
+            FunctionDeclaration::Function(name.clone(), params.clone(), label_block(&body, counter, label), storage_class.clone())
+    }
 }
 
 fn label_block(block: &Option<Block>, counter: &mut UniqueCounter, label: &Option<String>) -> Option<Block> {
@@ -415,16 +476,16 @@ fn label_optional_box_statement(statement: &Option<Box<Statement>>, counter: &mu
 }
 
 /// Creates a new typedata struct
-fn create_typedata(dtype: Type, defined: bool, param_count: usize) -> TypeData {
-    TypeData {dtype: dtype, defined: defined, param_count: param_count}
+fn create_typedata(dtype: Type, attr: IdentifierAttr) -> TypeData {
+    TypeData {dtype: dtype, attrs: attr}
 }
 
 /// Start typechecking
 fn typecheck_program(program: &Program, symbols: &mut HashMap<String, TypeData>) {
     match program {
-        Program::Program(functions) => {
-            for function in functions {
-                typecheck_function_declaration(function, symbols);
+        Program::Program(declarations) => {
+            for decl in declarations {
+                typecheck_declaration(decl, symbols, &Scope::File);
             }
         },
     }
@@ -432,15 +493,21 @@ fn typecheck_program(program: &Program, symbols: &mut HashMap<String, TypeData>)
 
 ///
 fn typecheck_function_declaration(decl: &FunctionDeclaration, symbols: &mut HashMap<String, TypeData>) {
-    let (name, param_list, body) = {
+    let (name, param_list, body, storage_class) = {
         match decl {
-            FunctionDeclaration::Function(name, param_list, body) => (name, param_list, body)
+            FunctionDeclaration::Function(name, param_list, body, storage_class) => (name, param_list, body, storage_class)
         }
     };
 
     let fun_type = Type::FunType(param_list.len());
     let has_body = body.is_some();
     let mut already_defined = false;
+    let mut global = 
+        if storage_class.is_none() {
+            true
+        } else {
+            *storage_class.as_ref().unwrap() != StorageClass::Static
+        };
 
     if symbols.contains_key(name) {
         let old_decl = symbols.get(name).unwrap();
@@ -449,32 +516,139 @@ fn typecheck_function_declaration(decl: &FunctionDeclaration, symbols: &mut Hash
             panic!("Incompatible function declaration");
         }
         
-        already_defined = old_decl.defined;
+        (already_defined, global) = match old_decl.attrs {
+            IdentifierAttr::FunAttr(defined, global, _) => (defined, global),
+            _                                            => panic!("not a function in typecheck function")
+        };
+
         if already_defined && has_body {
             panic!("Function is defined more than once")
         }
+
+        if global && (storage_class.is_some() && *storage_class.as_ref().unwrap() == StorageClass::Static) {
+            panic!("Static function declaration follows non-static");
+        }
+
     }
 
-    symbols.insert(name.clone(), create_typedata(fun_type, already_defined || has_body, param_list.len()));
+    let attrs = IdentifierAttr::FunAttr(already_defined || has_body, global, param_list.len());
+    symbols.insert(name.clone(), create_typedata(fun_type, attrs));
 
     if has_body {
         for param in param_list {
-            symbols.insert(param.clone(), create_typedata(Type::Int, true, 0));
+            symbols.insert(param.clone(), create_typedata(Type::Int, IdentifierAttr::LocalAttr));
         }
         typecheck_block(body, symbols);
     }
 }
 
 /// Checks the type of a variable
-fn typecheck_variable_declaration(decl: &VariableDeclaration, symbols: &mut HashMap<String, TypeData>) {
+fn typecheck_file_scope_variable_declaration(decl: &VariableDeclaration, symbols: &mut HashMap<String, TypeData>) {
     match decl {
-        VariableDeclaration::Variable(name, init) => {
-            symbols.insert(name.clone(), create_typedata(Type::Int, true, 0));
+        VariableDeclaration::Variable(name, init, storage_class) => {
+            let mut initial_value;
+            if init.is_none() {
+                if storage_class.is_some() && *storage_class.as_ref().unwrap() == StorageClass::Extern {
+                    initial_value = InitialValue::NoInitializer;
+                } else {
+                    initial_value = InitialValue::Tentative;
+                }
+            } else {
+                initial_value = match init.as_ref().unwrap() {
+                    Exp::Constant(int) => InitialValue::Initial(*int),
+                    _                       => panic!("Non-constant initializer")
+                };
+            }
 
-            if init.is_some() {
-                typecheck_exp(init, symbols);
+            let mut global = 
+                if storage_class.is_none() {
+                    true
+                } else {
+                    *storage_class.as_ref().unwrap() != StorageClass::Static
+                };
+
+            if symbols.contains_key(name) {
+                let old_decl = symbols.get(name).unwrap();
+                let (old_decl_attr_init, old_decl_attr_global) = match &old_decl.attrs {
+                    IdentifierAttr::StaticAttr(init, global) => (init.clone(), global.clone()),
+                    _                                           => panic!("Not a variable with static storage duration")
+                };
+                
+                if old_decl.dtype != Type::Int {
+                    panic!("Function redeclared as variable");
+                }
+
+                if storage_class.is_some() && *storage_class.as_ref().unwrap() == StorageClass::Extern {
+                    global = old_decl_attr_global;
+                } else if global != old_decl_attr_global {
+                    panic!("Conflicting variable linkage of {name}");
+                }
+
+                if initial_value_is_constant(&old_decl_attr_init) {
+                    if initial_value_is_constant(&initial_value) {
+                        panic!("Conflicting file scope variable definition");
+                    } else {
+                        initial_value = old_decl_attr_init;
+                    }
+                } else if !initial_value_is_constant(&initial_value) && initial_value_is_tentative(&old_decl_attr_init) {
+                    initial_value = InitialValue::Tentative;
+                }
+            }
+
+            let attrs = IdentifierAttr::StaticAttr(initial_value, global);
+            symbols.insert(name.clone(), create_typedata(Type::Int, attrs));
+        }
+    }
+}
+
+fn typecheck_local_variable_declaration(decl: &VariableDeclaration, symbols: &mut HashMap<String, TypeData>) {
+    match decl {
+        VariableDeclaration::Variable(name, init, storage_class) => {
+            let initial_value;
+            if storage_class.is_some() && *storage_class.as_ref().unwrap() == StorageClass::Extern {
+                if init.is_some() {
+                    panic!("Initializer on local extern variable declaration");
+                }
+                if symbols.contains_key(name) {
+                    let old_decl = symbols.get(name).unwrap();
+                    if old_decl.dtype != Type::Int {
+                        panic!("Function redeclared as variable");
+                    }
+                } else {
+                    symbols.insert(name.clone(), create_typedata(Type::Int, IdentifierAttr::StaticAttr(InitialValue::NoInitializer, true)));
+                }
+            } else if storage_class.is_some() && *storage_class.as_ref().unwrap() == StorageClass::Static {
+                if init.is_none() {
+                    initial_value = InitialValue::Initial(0);
+                } else {
+                    match init.as_ref().unwrap() {
+                        Exp::Constant(int) => initial_value = InitialValue::Initial(*int),
+                        _                       => panic!("Non-constant initializer on local static variable")
+                    }
+                }
+
+                symbols.insert(name.clone(), create_typedata(Type::Int, IdentifierAttr::StaticAttr(initial_value, false)));
+            } else {
+                symbols.insert(name.clone(), create_typedata(Type::Int, IdentifierAttr::LocalAttr));
+                if init.is_some() {
+                    typecheck_exp(init, symbols);
+                }
             }
         }
+    }
+}
+
+fn initial_value_is_constant(val: &InitialValue) -> bool {
+    match val {
+        InitialValue::Initial(_) => true,
+        _                        => false,
+    }
+}
+
+fn initial_value_is_tentative(val: &InitialValue) -> bool {
+    match val {
+        InitialValue::Tentative => true,
+        _                       => false,
     }
 }
 
@@ -492,8 +666,13 @@ fn typecheck_exp(init: &Option<Exp>, symbols: &mut HashMap<String, TypeData>) {
             if fun_type.dtype == Type::Int {
                 panic!("Variable used as a function name");
             }
+
+            let param_count = match fun_type.attrs {
+                IdentifierAttr::FunAttr(_, _, param_count) => param_count,
+                _                                                  => panic!("Function call of non-function")
+            };
             
-            if fun_type.param_count != args.len() {
+            if param_count != args.len() {
                 panic!("Function called with the wrong number of arguments");
             }
             
@@ -502,7 +681,7 @@ fn typecheck_exp(init: &Option<Exp>, symbols: &mut HashMap<String, TypeData>) {
             }
         },
         Exp::Var(v) => {
-            if symbols.get(&v).unwrap().dtype != Type::Int {
+            if symbols.contains_key(&v) && symbols.get(&v).unwrap().dtype != Type::Int {
                 panic!("Function name used as variable");
             }
         },
@@ -540,21 +719,21 @@ fn typecheck_block(body: &Option<Block>, symbols: &mut HashMap<String, TypeData>
 fn typecheck_block_item(items: &Vec<BlockItem>, symbols: &mut HashMap<String, TypeData>) {
     for item in items {
         match item {
-            BlockItem::D(decl)      => typecheck_declaration(decl, symbols),
-            BlockItem::S(statement)   => typecheck_statement(statement, symbols)
+            BlockItem::D(decl)      => typecheck_declaration(decl, symbols, &Scope::Block),
+            BlockItem::S(statement)   => typecheck_statement(statement, symbols, &Scope::Block)
         }
     }
 }
 
-fn typecheck_statement(statement: &Statement, symbols: &mut HashMap<String, TypeData>) {
+fn typecheck_statement(statement: &Statement, symbols: &mut HashMap<String, TypeData>, scope: &Scope) {
     match statement {
         Statement::While(condition, body, _) => {
             typecheck_exp(&Some(condition.clone()), symbols);
-            typecheck_statement(body, symbols);
+            typecheck_statement(body, symbols, scope);
         },
         Statement::Compound(body) => typecheck_block(&Some(body.clone()), symbols),
         Statement::DoWhile(body, condition, _) => {
-            typecheck_statement(body, symbols);
+            typecheck_statement(body, symbols, scope);
             typecheck_exp(&Some(condition.clone()), symbols);
         },
         Statement::Expression(exp) => {
@@ -562,16 +741,16 @@ fn typecheck_statement(statement: &Statement, symbols: &mut HashMap<String, Type
         },
         Statement::If(condition, then, els) => {
             typecheck_exp(&Some(condition.clone()), symbols);
-            typecheck_statement(then, symbols);
+            typecheck_statement(then, symbols, scope);
             if els.is_some() {
-                typecheck_statement(&els.clone().unwrap(), symbols);
+                typecheck_statement(&els.clone().unwrap(), symbols, scope);
             }
         },
         Statement::For(for_init, condition, post, body, _) => {
             typecheck_for_init(for_init, symbols);
             typecheck_exp(&condition, symbols);
             typecheck_exp(&post, symbols);
-            typecheck_statement(body, symbols);
+            typecheck_statement(body, symbols, scope);
         },
         Statement::Return(exp) => typecheck_exp(&Some(exp.clone()), symbols),
         Statement::Break(_) => (),
@@ -583,13 +762,29 @@ fn typecheck_statement(statement: &Statement, symbols: &mut HashMap<String, Type
 fn typecheck_for_init(for_init: &ForInit, symbols: &mut HashMap<String, TypeData>) {
     match for_init {
         ForInit::InitExp(exp) => typecheck_exp(exp, symbols),
-        ForInit::InitDecl(decl) => typecheck_variable_declaration(decl, symbols),
+        ForInit::InitDecl(decl) => {
+            let (_, _, storage_class) = match decl {
+                VariableDeclaration::Variable(n, i, s) => (n, i, s)
+            };
+
+            if storage_class.is_some() {
+                panic!("For loop declaration has static/extern storage class");
+            }
+
+            typecheck_local_variable_declaration(decl, symbols)
+        },
     }
 }
 
-fn typecheck_declaration(decl: &Declaration, symbols: &mut HashMap<String, TypeData>) {
+fn typecheck_declaration(decl: &Declaration, symbols: &mut HashMap<String, TypeData>, scope: &Scope) {
     match decl {
         Declaration::FunDecl(fun_decl) => typecheck_function_declaration(fun_decl, symbols),
-        Declaration::VarDecl(var_decl) => typecheck_variable_declaration(var_decl, symbols),
+        Declaration::VarDecl(var_decl) => {
+            if *scope == Scope::File {
+                typecheck_file_scope_variable_declaration(var_decl, symbols)
+            } else {
+                typecheck_local_variable_declaration(var_decl, symbols);
+            }
+        },
     }
 }

@@ -155,14 +155,14 @@ pub fn stop_at_semantic(path: &Path) -> (Program, HashMap<String, TypeData>, Uni
 
 /// Returns an IR of the program to turn into an assembly AST.
 pub fn stop_at_tacky(path: &Path) -> (IRProgram, HashMap<String, TypeData>) {
-    let (transformed_ast, symbols, mut counter) = stop_at_semantic(path);
-    (tacky(&transformed_ast, &mut counter), symbols)
+    let (transformed_ast, mut symbols, mut counter) = stop_at_semantic(path);
+    (tacky(&transformed_ast, &mut counter, &mut symbols), symbols)
 }
 
 /// Returns an assembly AST to turn into assembly and write to a .s file.
 pub fn stop_at_codegen(path: &Path) -> (AssemblyProgram, HashMap<String, TypeData>) {
     let (tacky_ast, symbols) = stop_at_tacky(path);
-    (assembly(&tacky_ast), symbols)
+    (assembly(&tacky_ast, &symbols), symbols)
 }
 
 /// Generates assembly and writes to a .s file.

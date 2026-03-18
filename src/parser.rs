@@ -1,6 +1,7 @@
 use crate::lexer::Tokens;
 use crate::parser::parser_ast::BinaryOperator;
 use crate::parser::parser_ast::Block;
+use crate::parser::parser_ast::StorageClass;
 
 pub mod parser_ast {
     use String as Name;
@@ -15,12 +16,18 @@ pub mod parser_ast {
 
     #[derive(Debug)]
     pub enum Program {
-        Program(Vec<FunctionDeclaration>)
+        Program(Vec<Declaration>)
+    }
+
+    #[derive(Debug, Clone)]
+    pub enum Declaration {
+        FunDecl(FunctionDeclaration),
+        VarDecl(VariableDeclaration)
     }
 
     #[derive(Debug, Clone)]
     pub enum FunctionDeclaration {
-        Function(Name, Vec<Identifier>, Option<Block>)
+        Function(Name, Vec<Identifier>, Option<Block>, Option<StorageClass>)
     }
 
     #[derive(Debug, Clone)]
@@ -38,14 +45,8 @@ pub mod parser_ast {
     }
 
     #[derive(Debug, Clone)]
-    pub enum Declaration {
-        FunDecl(FunctionDeclaration),
-        VarDecl(VariableDeclaration)
-    }
-
-    #[derive(Debug, Clone)]
     pub enum VariableDeclaration {
-        Variable(Name, Option<Init>)
+        Variable(Name, Option<Init>, Option<StorageClass>)
     }
 
     #[derive(Debug, Clone)]
@@ -64,6 +65,12 @@ pub mod parser_ast {
         Complement,
         Negate,
         LogicalNot
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum StorageClass {
+        Static,
+        Extern
     }
 
     #[derive(Debug, Clone)]
@@ -127,7 +134,8 @@ pub fn parser(tokens: &mut Vec<Tokens>) -> Program {
     tokens.reverse();
     let ast = parse_program(tokens);
     if !tokens.is_empty() {
-        panic!("more than just a main function");
+        dbg!(tokens);
+        panic!("Did not parse all tokens");
     }
 
     //dbg!(&ast);
@@ -137,19 +145,34 @@ pub fn parser(tokens: &mut Vec<Tokens>) -> Program {
 
 /// Parse entire program.
 fn parse_program(tokens: &mut Vec<Tokens>) -> Program {
-    let mut functions: Vec<FunctionDeclaration> = Vec::new();
+    let mut declarations: Vec<Declaration> = Vec::new();
 
-    while tokens.len() > 0 && peek(tokens) == Tokens::Int {
-        functions.push(parse_function_declaration(tokens));
+    while tokens.len() > 0 && is_specifier(&peek(tokens)) {
+        declarations.push(parse_declaration(tokens));
     }
 
-    Program::Program(functions)
+    Program::Program(declarations)
+}
+
+/// Parses declarations
+fn parse_declaration(tokens: &mut Vec<Tokens>) -> Declaration {
+    let mut specifier_list = take_specifier_list(tokens);
+    let identifier_token = take_token(tokens);
+    let check_if_function = peek(tokens);
+    return_token(tokens, identifier_token);
+    return_specifier_list(tokens, &mut specifier_list);
+
+    if check_if_function == Tokens::OpenParenthesis {
+        Declaration::FunDecl(parse_function_declaration(tokens))
+    } else {
+        Declaration::VarDecl(parse_variable_declaration(tokens))
+    }
 }
 
 /// Parse function declarations and function definitions
 fn parse_function_declaration(tokens: &mut Vec<Tokens>) -> FunctionDeclaration {
     // Checks for function elements surrounding body
-    expected_token(Tokens::Int, tokens);
+    let storage_class = parse_specifiers(tokens);
     let name = parse_identifier(tokens);
     expected_token(Tokens::OpenParenthesis, tokens);
     let param_list = parse_param_list(tokens);
@@ -158,10 +181,104 @@ fn parse_function_declaration(tokens: &mut Vec<Tokens>) -> FunctionDeclaration {
     
     if next_token == Tokens::Semicolon {
         expected_token(Tokens::Semicolon, tokens);
-        return FunctionDeclaration::Function(name, param_list, None);
+        return FunctionDeclaration::Function(name, param_list, None, storage_class);
     }
 
-    FunctionDeclaration::Function(name, param_list, Some(parse_block(tokens)))
+    FunctionDeclaration::Function(name, param_list, Some(parse_block(tokens)), storage_class)
+}
+
+/// Goes through specifiers by removing them from list
+fn take_specifier_list(tokens: &mut Vec<Tokens>) -> Vec<Tokens> {
+    let mut specifier_list: Vec<Tokens> = Vec::new();
+    
+    while is_specifier(&peek(tokens)) {
+        specifier_list.push(take_token(tokens));
+    }
+
+    specifier_list
+}
+
+/// Returns specifiers to tokens
+fn return_specifier_list(tokens: &mut Vec<Tokens>, specifier_list: &mut Vec<Tokens>) {
+    while !specifier_list.is_empty() {
+        tokens.push(specifier_list.pop().unwrap());
+    }
+}
+
+/// Parses variable declaration; can optionally include initialization expression.
+fn parse_variable_declaration(tokens: &mut Vec<Tokens>) -> VariableDeclaration {
+    let storage_class = parse_specifiers(tokens);
+    let identifier = parse_identifier(tokens);
+
+    // Either a declaration is initialized or not
+    if peek(tokens) == Tokens::Assignment {
+        take_token(tokens);
+        let exp = parse_exp(tokens, 0);
+        expected_token(Tokens::Semicolon, tokens);
+        VariableDeclaration::Variable(identifier, Some(exp), storage_class)
+    } else {
+        expected_token(Tokens::Semicolon, tokens);
+        VariableDeclaration::Variable(identifier, None, storage_class)
+    }
+}
+
+/// Parses specifiers like int and static that appear at beginning of declaration
+fn parse_specifiers(tokens: &mut Vec<Tokens>) -> Option<StorageClass> {
+    let specifier_list= take_specifier_list(tokens);
+
+    let (_type_specifier, storage_class) = parse_type_and_storage_class(&specifier_list);
+
+    storage_class
+}
+
+/// Parses types like int and storage classes like static
+fn parse_type_and_storage_class(specifier_list: &Vec<Tokens>) -> (Tokens, Option<StorageClass>) {
+    let mut types: Vec<Tokens> = Vec::new();
+    let mut storage_classes: Vec<Tokens> = Vec::new();
+
+    for specifier in specifier_list {
+        if *specifier == Tokens::Int {
+            types.push(specifier.clone());
+        } else {
+            storage_classes.push(specifier.clone())
+        }
+    }
+
+    if types.len() != 1 {
+        panic!("Invalid type specifier");
+    }
+    if storage_classes.len() > 1 {
+        panic!("Invalid storage class");
+    }
+
+    let type_specifier = Tokens::Int;
+    let mut storage_class = None;
+
+    if storage_classes.len() == 1 {
+        let token = storage_classes.iter().nth(0).unwrap().clone();
+        storage_class = parse_storage_class(&token);
+    } 
+
+    (type_specifier, storage_class)
+}
+
+/// Parses storage class based on input token
+fn parse_storage_class(token: &Tokens) -> Option<StorageClass> {
+    match token {
+        Tokens::Static    => Some(StorageClass::Static),
+        Tokens::Extern    => Some(StorageClass::Extern),
+        _                 => panic!("Invalid storage class passed to parse_storage_class")
+    }
+}
+
+/// Checks if next token is a specifier
+fn is_specifier(token: &Tokens) -> bool {
+    match token {
+        Tokens::Int
+        | Tokens::Static
+        | Tokens::Extern => true,
+        _                => false
+    }
 }
 
 fn parse_param_list(tokens: &mut Vec<Tokens>) -> Vec<String> {
@@ -221,7 +338,7 @@ fn parse_identifier(tokens: &mut Vec<Tokens>) -> String {
 /// 
 /// Treated as a declaration if next token is so, otherwise as a statement.
 fn parse_block_item(tokens: &mut Vec<Tokens>) -> BlockItem {
-    if peek(tokens) == Tokens::Int {
+    if is_specifier(&peek(tokens))  {
         let decl = parse_declaration(tokens);
         BlockItem::D(decl)
     } else {
@@ -230,20 +347,7 @@ fn parse_block_item(tokens: &mut Vec<Tokens>) -> BlockItem {
     }
 }
 
-/// Parses declarations
-fn parse_declaration(tokens: &mut Vec<Tokens>) -> Declaration {
-    expected_token(Tokens::Int, tokens);
-    let identifier_token = take_token(tokens);
-    let check_if_function = peek(tokens);
-    return_token(tokens, identifier_token);
-    return_token(tokens, Tokens::Int);
 
-    if check_if_function == Tokens::OpenParenthesis {
-        Declaration::FunDecl(parse_function_declaration(tokens))
-    } else {
-        Declaration::VarDecl(parse_variable_declaration(tokens))
-    }
-}
 
 /// Parses return, expression, and null statements.
 fn parse_statement(tokens: &mut Vec<Tokens>) -> Statement {
@@ -323,29 +427,12 @@ fn parse_statement(tokens: &mut Vec<Tokens>) -> Statement {
 /// Either returns a declaration or expression for initialization
 fn parse_for_init(tokens: &mut Vec<Tokens>) -> ForInit {
     let next_token = peek(tokens);
-    if next_token == Tokens::Int {
+    if is_specifier(&next_token) {
         ForInit::InitDecl(parse_variable_declaration(tokens))
     } else {
         let return_val = ForInit::InitExp(parse_optional_exp(tokens, Tokens::Semicolon));
         expected_token(Tokens::Semicolon, tokens);
         return_val
-    }
-}
-
-/// Parses variable declaration; can optionally include initialization expression.
-fn parse_variable_declaration(tokens: &mut Vec<Tokens>) -> VariableDeclaration {
-    expected_token(Tokens::Int, tokens);
-    let identifier = parse_identifier(tokens);
-
-    // Either a declaration is initialized or not
-    if peek(tokens) == Tokens::Assignment {
-        take_token(tokens);
-        let exp = parse_exp(tokens, 0);
-        expected_token(Tokens::Semicolon, tokens);
-        VariableDeclaration::Variable(identifier, Some(exp))
-    } else {
-        expected_token(Tokens::Semicolon, tokens);
-        VariableDeclaration::Variable(identifier, None)
     }
 }
 

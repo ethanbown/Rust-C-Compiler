@@ -1,19 +1,27 @@
 
+use std::{collections::HashMap};
+
 use crate::parser::parser_ast::*;
+use crate::semantic_analysis::IdentifierAttr;
+use crate::semantic_analysis::InitialValue;
 use crate::semantic_analysis::UniqueCounter;
 use crate::semantic_analysis::UniqueType;
 use crate::semantic_analysis::make_unique;
+use crate::semantic_analysis::TypeData as TypeData;
+
 
 pub mod tacky_ast {
     #[derive(Debug)]
     pub enum IRProgram {
-        IRProgram(Vec<IRFunctionDefinition>)
+        IRProgram(Vec<IRTopLevel>)
     }
 
     #[derive(Debug)]
-    pub enum IRFunctionDefinition {
-        //          name,   params      instructions
-        IRFunction(String, Vec<String>, Vec<IRInstructions>)
+    pub enum IRTopLevel {
+        //          name,  global, params,      instructions
+        IRFunction(String, bool, Vec<String>, Vec<IRInstructions>),
+        //          identifier, global, init
+        StaticVariable(String, bool, i32)
     }
 
     #[derive(Debug)]
@@ -73,15 +81,15 @@ pub mod tacky_ast {
 }
 
 use tacky_ast::IRProgram as IRProgram;
-use tacky_ast::IRFunctionDefinition as IRFunctionDefinition;
+use tacky_ast::IRTopLevel as IRTopLevel;
 use tacky_ast::IRInstructions as IRInstructions;
 use tacky_ast::IRUnaryOperator as IRUnaryOperator;
 use tacky_ast::IRBinaryOperator as IRBinaryOperator;
 use tacky_ast::Val as Val;
 
 /// Invokes the TACKY/IR generation phase and returns an IR version of the program.
-pub fn tacky(ast: &Program, counter: &mut UniqueCounter) -> IRProgram {
-    let tacky_ast = ir_parse_program(&ast, counter);
+pub fn tacky(ast: &Program, counter: &mut UniqueCounter, symbols: &mut HashMap<String, TypeData>) -> IRProgram {
+    let tacky_ast = ir_parse_program(&ast, counter, symbols);
 
     //dbg!(&tacky_ast);
 
@@ -89,38 +97,68 @@ pub fn tacky(ast: &Program, counter: &mut UniqueCounter) -> IRProgram {
 }
 
 /// Parses the main function in the program.
-fn ir_parse_program(ast: &Program, counter: &mut UniqueCounter) -> IRProgram {
-    let mut return_val: Vec<IRFunctionDefinition> = Vec::new(); 
-    
+fn ir_parse_program(ast: &Program, counter: &mut UniqueCounter, symbols: &mut HashMap<String, TypeData>) -> IRProgram {
     match ast {
-        Program::Program(functions) => {
-            for function in functions {
-                if ir_check_body_is_some(function) {
-                    return_val.push(ir_parse_function(function, counter));
-                }
-            }
-        }
+        Program::Program(declarations) => IRProgram::IRProgram(ir_parse_top_level(declarations, counter, symbols))
     }
-    IRProgram::IRProgram(return_val)
 }
 
 fn ir_check_body_is_some(ast: &FunctionDeclaration) -> bool {
     match ast {
-        FunctionDeclaration::Function(_, _, body) => body.is_some()
+        FunctionDeclaration::Function(_, _, body, _) => body.is_some()
+    }
+}
+
+fn ir_parse_top_level(declarations: &Vec<Declaration>, counter: &mut UniqueCounter, symbols: &mut HashMap<String, TypeData>) -> Vec<IRTopLevel> {
+    let mut return_val: Vec<IRTopLevel> = Vec::new(); 
+
+    for decl in declarations {
+        match decl {
+            Declaration::FunDecl(fun_decl) => {
+                if ir_check_body_is_some(fun_decl) {
+                    return_val.push(ir_parse_function(fun_decl, counter, symbols));
+                }
+            },
+            Declaration::VarDecl(_) => ()
+        }
+    }
+
+    convert_symbols_to_tacky(&mut return_val, symbols);
+    return_val
+}
+
+/// Deals with static variables
+fn convert_symbols_to_tacky(return_val: &mut Vec<IRTopLevel>, symbols: &mut HashMap<String, TypeData>) {
+    for (name, entry) in symbols {
+        match &entry.attrs {
+            IdentifierAttr::StaticAttr(init, global) => {
+                match init {
+                    InitialValue::Initial(i) => return_val.push(IRTopLevel::StaticVariable(name.clone(), *global, *i)),
+                    InitialValue::Tentative       => return_val.push(IRTopLevel::StaticVariable(name.clone(), *global, 0)),
+                    InitialValue::NoInitializer   => continue
+                }
+            },
+            _       => continue
+        }
     }
 }
 
 /// Parses function and function body, returning an IR function.
-fn ir_parse_function(ast: &FunctionDeclaration, counter: &mut UniqueCounter) -> IRFunctionDefinition {
+fn ir_parse_function(ast: &FunctionDeclaration, counter: &mut UniqueCounter, symbols: &mut HashMap<String, TypeData>) -> IRTopLevel {
     let (name, param_list, mut instructions) = match ast {
-        FunctionDeclaration::Function(name, param_list, body) => {
+        FunctionDeclaration::Function(name, param_list, body, _) => {
             let new_body = ir_parse_block(&body.clone().unwrap(), counter, name.to_string());
             (name.clone(), param_list.clone(), new_body)
         }
     };
 
+    let global = match symbols.get(&name).unwrap().attrs {
+        IdentifierAttr::FunAttr(_, global, _) => global,
+        _                                           => panic!("Problem in ir_parse_function")
+    };
+
     instructions.push(IRInstructions::Return(Val::Constant(0)));
-    IRFunctionDefinition::IRFunction(name, param_list, instructions)
+    IRTopLevel::IRFunction(name, global, param_list, instructions)
 }
 
 /// Passes vector of instruction on
@@ -156,8 +194,11 @@ fn ir_parse_declaration(decl: &Declaration, instructions: &mut Vec<IRInstruction
 
 fn ir_parse_variable_declaration(decl: &VariableDeclaration, instructions: &mut Vec<IRInstructions>, counter: &mut UniqueCounter) {
     match decl {
-        VariableDeclaration::Variable(name, init) => {
+        VariableDeclaration::Variable(name, init, storage_class) => {
             if init.is_some() {
+                if storage_class.is_some() {
+                    return;
+                }
                 let copy = init.clone();
 
                 let return_val = emit_tacky(&copy.unwrap(), instructions, counter, name);

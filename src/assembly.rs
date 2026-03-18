@@ -1,18 +1,22 @@
 use crate::assembly::assembly_ast::AssemblyBinaryOperator;
 use crate::assembly::assembly_ast::ConditionCode;
+use crate::semantic_analysis::IdentifierAttr;
 use crate::tacky::tacky_ast::*;
+use crate::semantic_analysis::TypeData as TypeData;
 use std::collections::HashMap;
 
 pub mod assembly_ast {
     #[derive(Debug)]
     pub enum AssemblyProgram {
-        Program(Vec<AssemblyFunctionDefinition>)
+        Program(Vec<AssemblyTopLevel>)
     }
 
     #[derive(Debug)]
-    pub enum AssemblyFunctionDefinition {
-        //               name,   instructions
-        AssemblyFunction(String, Vec<Instructions>)
+    pub enum AssemblyTopLevel {
+        //               name,  global, instructions
+        AssemblyFunction(String, bool, Vec<Instructions>),
+        //                  identifer, global, int
+        AssemblyStaticVariable(String, bool, i32)
     }
 
     #[derive(Debug, Clone)]
@@ -59,6 +63,8 @@ pub mod assembly_ast {
         //     identifier
         Pseudo(String),
         Stack(i32),
+        //  identifier
+        Data(String),
         Reg(Reg)
     }
 
@@ -87,18 +93,18 @@ pub mod assembly_ast {
 }
 
 use assembly_ast::AssemblyProgram as AssemblyProgram;
-use assembly_ast::AssemblyFunctionDefinition as AssemblyFunctionDefinition;
+use assembly_ast::AssemblyTopLevel as AssemblyTopLevel;
 use assembly_ast::AssemblyUnaryOperator as AssemblyUnaryOperator;
 use assembly_ast::Instructions as Instructions;
 use assembly_ast::Operand as Operand;
 use assembly_ast::Reg as Reg;
 
-pub fn assembly(tacky_ast: &IRProgram) -> AssemblyProgram {
+pub fn assembly(tacky_ast: &IRProgram, symbols: &HashMap<String, TypeData>) -> AssemblyProgram {
     let mut binary_ast = assembly_parse_program(&tacky_ast);
 
     //dbg!(&binary_ast);
 
-    let identifiers_to_offsets = replace_pseudo_operands(&mut binary_ast);
+    let identifiers_to_offsets = replace_pseudo_operands(&mut binary_ast, &symbols);
 
     //dbg!(&binary_ast);
 
@@ -111,18 +117,18 @@ pub fn assembly(tacky_ast: &IRProgram) -> AssemblyProgram {
 
 fn assembly_parse_program(tacky_ast: &IRProgram) -> AssemblyProgram {
     let return_val = match tacky_ast {
-        IRProgram::IRProgram(inner) =>  assembly_parse_function(&inner),
+        IRProgram::IRProgram(inner) =>  assembly_parse_top_level(&inner),
     };
 
     AssemblyProgram::Program(return_val)
 }
 
-fn assembly_parse_function(tacky_ast: &Vec<IRFunctionDefinition>) -> Vec<AssemblyFunctionDefinition> {
-    let mut return_val: Vec<AssemblyFunctionDefinition> = Vec::new(); 
+fn assembly_parse_top_level(tacky_ast: &Vec<IRTopLevel>) -> Vec<AssemblyTopLevel> {
+    let mut return_val: Vec<AssemblyTopLevel> = Vec::new(); 
 
-    for function in tacky_ast {
-        match function {
-            IRFunctionDefinition::IRFunction(name, param_list, body) => {
+    for top_level in tacky_ast {
+        match top_level {
+            IRTopLevel::IRFunction(name, global, param_list, body) => {
                 let mut instructions: Vec<Instructions> = Vec::new();
                 let arg_registers: Vec<Reg> = vec!(Reg::DI, Reg::SI, Reg::DX, Reg::CX, Reg::R8, Reg::R9);
                 let mut arg_index = 0;
@@ -139,7 +145,10 @@ fn assembly_parse_function(tacky_ast: &Vec<IRFunctionDefinition>) -> Vec<Assembl
                 }
 
                 instructions.append(&mut assembly_parse_instructions(&body));
-                return_val.push(AssemblyFunctionDefinition::AssemblyFunction(name.clone(), instructions));
+                return_val.push(AssemblyTopLevel::AssemblyFunction(name.clone(), *global, instructions));
+            },
+            IRTopLevel::StaticVariable(identifer, global, init) => {
+                return_val.push(AssemblyTopLevel::AssemblyStaticVariable(identifer.clone(), *global, *init))
             }
         }
     }
@@ -332,53 +341,55 @@ fn assembly_relational_instructions(cond: ConditionCode, return_val: &mut Vec<In
     return_val.push(Instructions::SetCC(cond, dst.clone()));
 }
 
-fn replace_pseudo_operands(binary_ast: &mut AssemblyProgram) -> HashMap<String, i32> {
+fn replace_pseudo_operands(binary_ast: &mut AssemblyProgram, symbols: &HashMap<String, TypeData>) -> HashMap<String, i32> {
     let mut identifiers_to_offsets: HashMap<String, i32> = HashMap::new();
-    pseudo_parse_program(binary_ast, &mut identifiers_to_offsets);
+    pseudo_parse_program(binary_ast, &mut identifiers_to_offsets, symbols);
     identifiers_to_offsets
 }
 
-fn pseudo_parse_program(binary_ast: &mut AssemblyProgram, identifiers_to_offsets: &mut HashMap<String, i32>) {
+fn pseudo_parse_program(binary_ast: &mut AssemblyProgram, identifiers_to_offsets: &mut HashMap<String, i32>, symbols: &HashMap<String, TypeData>) {
     match binary_ast {
         AssemblyProgram::Program(inner) => {
-            for function in inner {
+            for top_level in inner {
                 let mut stack_offset = 0;
-                pseudo_parse_function(function, identifiers_to_offsets, &mut stack_offset);
-                match function {
-                    AssemblyFunctionDefinition::AssemblyFunction(name, _) => {
+                pseudo_parse_top_level(top_level, identifiers_to_offsets, &mut stack_offset, symbols);
+                match top_level {
+                    AssemblyTopLevel::AssemblyFunction(name, _, _) => {
                         identifiers_to_offsets.insert(name.clone(), stack_offset);
-                    }
+                    },
+                    _ => ()
                 }
             }
         }
     }
 }
 
-fn pseudo_parse_function(binary_ast: &mut AssemblyFunctionDefinition, identifiers_to_offsets: &mut HashMap<String, i32>, stack_offset: &mut i32) {
+fn pseudo_parse_top_level(binary_ast: &mut AssemblyTopLevel, identifiers_to_offsets: &mut HashMap<String, i32>, stack_offset: &mut i32, symbols: &HashMap<String, TypeData>) {
     match binary_ast {
-        AssemblyFunctionDefinition::AssemblyFunction(_, body) => pseudo_parse_instructions(body, identifiers_to_offsets, stack_offset),
+        AssemblyTopLevel::AssemblyFunction(_, _, body) => pseudo_parse_instructions(body, identifiers_to_offsets, stack_offset, symbols),
+        _ => ()
     }
 }
 
-fn pseudo_parse_instructions(binary_ast: &mut Vec<Instructions>, identifiers_to_offsets: &mut HashMap<String, i32>, stack_offset: &mut i32) {
+fn pseudo_parse_instructions(binary_ast: &mut Vec<Instructions>, identifiers_to_offsets: &mut HashMap<String, i32>, stack_offset: &mut i32, symbols: &HashMap<String, TypeData>) {
     for instruction in &mut *binary_ast {
         match instruction {
             Instructions::Mov(src,dst ) => {
-                pesudo_parse_operand(src, identifiers_to_offsets, stack_offset);
-                pesudo_parse_operand(dst, identifiers_to_offsets, stack_offset);
+                pesudo_parse_operand(src, identifiers_to_offsets, stack_offset, symbols);
+                pesudo_parse_operand(dst, identifiers_to_offsets, stack_offset, symbols);
             },
-            Instructions::Unary(_, operand) => pesudo_parse_operand(operand, identifiers_to_offsets, stack_offset),
+            Instructions::Unary(_, operand) => pesudo_parse_operand(operand, identifiers_to_offsets, stack_offset, symbols),
             Instructions::Binary(_, op1, op2 ) => {
-                pesudo_parse_operand(op1, identifiers_to_offsets, stack_offset);
-                pesudo_parse_operand(op2, identifiers_to_offsets, stack_offset);
+                pesudo_parse_operand(op1, identifiers_to_offsets, stack_offset, symbols);
+                pesudo_parse_operand(op2, identifiers_to_offsets, stack_offset, symbols);
             },
             Instructions::Cmp(op1, op2) => {
-                pesudo_parse_operand(op1, identifiers_to_offsets, stack_offset);
-                pesudo_parse_operand(op2, identifiers_to_offsets, stack_offset);
+                pesudo_parse_operand(op1, identifiers_to_offsets, stack_offset, symbols);
+                pesudo_parse_operand(op2, identifiers_to_offsets, stack_offset, symbols);
             },
-            Instructions::Idiv(operand) => pesudo_parse_operand(operand, identifiers_to_offsets, stack_offset),
-            Instructions::Push(operand) => pesudo_parse_operand(operand, identifiers_to_offsets, stack_offset),
-            Instructions::SetCC(_, op) => pesudo_parse_operand(op, identifiers_to_offsets, stack_offset),
+            Instructions::Idiv(operand) => pesudo_parse_operand(operand, identifiers_to_offsets, stack_offset, symbols),
+            Instructions::Push(operand) => pesudo_parse_operand(operand, identifiers_to_offsets, stack_offset, symbols),
+            Instructions::SetCC(_, op) => pesudo_parse_operand(op, identifiers_to_offsets, stack_offset, symbols),
             Instructions::Cdq => (),
             Instructions::Jmp(_) => (),
             Instructions::JmpCC(_, _) => (),
@@ -391,19 +402,30 @@ fn pseudo_parse_instructions(binary_ast: &mut Vec<Instructions>, identifiers_to_
     }
 }
 
-fn pesudo_parse_operand(binary_ast: &mut Operand, identifiers_to_offsets: &mut HashMap<String, i32>, stack_offset: &mut i32) {
+fn pesudo_parse_operand(binary_ast: &mut Operand, identifiers_to_offsets: &mut HashMap<String, i32>, stack_offset: &mut i32, symbols: &HashMap<String, TypeData>) {
     match binary_ast {
         Operand::Pseudo(label) => {
             match identifiers_to_offsets.get(label) {
                 Some(offset) => *binary_ast = Operand::Stack(*offset),
                 None => {
-                    *stack_offset -= 4;
-                    identifiers_to_offsets.insert(label.to_string(), *stack_offset);
-                    *binary_ast = Operand::Stack(*stack_offset)
+                    if symbols.contains_key(label) && is_static(&symbols.get(label).unwrap().attrs) {
+                        *binary_ast = Operand::Data(label.clone())
+                    } else {
+                        *stack_offset -= 4;
+                        identifiers_to_offsets.insert(label.to_string(), *stack_offset);
+                        *binary_ast = Operand::Stack(*stack_offset)
+                    }
                 }
             }
         },
         _ => ()
+    }
+}
+
+fn is_static(attrs: &IdentifierAttr) -> bool {
+    match attrs {
+        IdentifierAttr::StaticAttr(_, _) => true,
+        _                                => false
     }
 }
 
@@ -414,23 +436,29 @@ fn fixing_instructions(binary_ast: &mut AssemblyProgram, identifiers_to_offsets:
 fn fixing_parse_program(binary_ast: &mut AssemblyProgram, identifiers_to_offsets: &HashMap<String, i32>){
     match binary_ast {
         AssemblyProgram::Program(inner) => {
-            for function in inner {
+            for top_level in inner {
+                match top_level {
+                    AssemblyTopLevel::AssemblyStaticVariable(_, _, _) => continue,
+                    AssemblyTopLevel::AssemblyFunction(_, _, _)       => ()
+                }
                 let stack_offset = 
-                    match function {
-                        AssemblyFunctionDefinition::AssemblyFunction(name, _) => {
+                    match top_level {
+                        AssemblyTopLevel::AssemblyFunction(name, _, _) => {
                             identifiers_to_offsets.get(name).unwrap().clone()
                         }
+                        AssemblyTopLevel::AssemblyStaticVariable(_, _, _)        => 0
                     };
 
-                fixing_parse_function(function, stack_offset);
+                fixing_parse_function(top_level, stack_offset);
             }
         }
     }
 }
 
-fn fixing_parse_function(binary_ast: &mut AssemblyFunctionDefinition, stack_offset: i32) {
+fn fixing_parse_function(binary_ast: &mut AssemblyTopLevel, stack_offset: i32) {
     match binary_ast {
-        AssemblyFunctionDefinition::AssemblyFunction(_, body) => fixing_parse_instructions(body, stack_offset)
+        AssemblyTopLevel::AssemblyFunction(_, _, body) => fixing_parse_instructions(body, stack_offset),
+        AssemblyTopLevel::AssemblyStaticVariable(_, _, _)         => ()
     }
 }
 
@@ -513,16 +541,23 @@ fn fixing_parse_instructions(binary_ast: &mut Vec<Instructions>, stack_offset: i
 fn are_both_memory_addresses(src: &Operand, dst: &Operand) -> bool {
     match src {
         Operand::Stack(_) => match dst {
-                Operand::Stack(_) => true,
-                _ => false         
+                Operand::Stack(_)
+                | Operand::Data(_) => true,
+                _                  => false      
             },
+        Operand::Data(_)  => match dst {
+            Operand::Stack(_)      
+            | Operand::Data(_)     => true,
+            _                      => false
+        }
         _ => false
     }
 }
 
 fn is_destination_memory_address(dst: &Operand) -> bool {
     match dst {
-        Operand::Stack(_) => true,
+        Operand::Stack(_)
+        | Operand::Data(_) => true,
         _ => false
     }
 }
