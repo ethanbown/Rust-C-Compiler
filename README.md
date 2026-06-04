@@ -26,9 +26,17 @@ git clone https://github.com/ethanbown/Rust-C-Compiler.git
 ```
 2. Enter the directory:
 ```
-cd rust-c-compiler
+cd Rust-C-Compiler
 ```
 3. Build the project:
 ```
 cargo build
+```
+4. Build should be under ./target/debug, run compiler with:
+```
+cargo run
+```
+or
+```
+./target/debug/
 ```
