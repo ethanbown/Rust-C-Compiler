@@ -4,14 +4,14 @@ RCC (Rust C Compiler) is a implementation of the psedocode and algorithms from W
 
 ## Features
 
-* **Loops** for, while, do-while
-* **Variables** shadowing, assignment, declaration, initalization
-* **Scope** function scope, block scope, global scope
-* **Types** currently only supports int
-* **Storage Class** static, extern
-* **Functions** declaration, implementation, function-call syntax
-* **Statements** if, if-else
-* **Operators** all arithmetic, logical, and bitwise operators
+* **Loops:** for, while, do-while
+* **Variables:** shadowing, assignment, declaration, initalization
+* **Scope:** function scope, block scope, global scope
+* **Types:** currently only supports int
+* **Storage Class:** static, extern
+* **Functions:** declaration, implementation, function-call syntax
+* **Statements:** if, if-else
+* **Operators:** all arithmetic, logical, and bitwise operators
 
 ### Prerequisites
 
