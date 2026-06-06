@@ -6,8 +6,8 @@ mod tacky;
 mod assembly;
 mod code_emission;
 
-use compiler_driver::compiler_driver as comp_driver;
+use compiler_driver::compiler_driver;
 
 fn main() {
-    comp_driver()
+    compiler_driver();
 }

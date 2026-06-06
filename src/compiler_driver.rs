@@ -1,11 +1,20 @@
-use std::{collections::HashMap, env::{self}, fs::{self, File}, io::Write, path::Path, process::Command};
+use std::{
+    collections::HashMap, 
+    env::{self}, 
+    fs::{self, File}, 
+    io::Write, 
+    path::Path, 
+    process::Command,
+};
 
-use crate::{assembly::{assembly as assembly, assembly_ast::AssemblyProgram}, 
-            code_emission::code_emission as code_emission, 
-            lexer::{Tokens as Tokens, lexer as lexer}, 
-            parser::{parser as parser, parser_ast::Program}, 
-            semantic_analysis::{UniqueCounter, TypeData, create_counter, semantic_analysis}, 
-            tacky::{tacky as tacky, tacky_ast::IRProgram}};
+use crate::{
+    lexer::{Tokens, lexer}, 
+    parser::{parser, parser_ast::Program}, 
+    semantic_analysis::{UniqueCounter, TypeData, create_counter, semantic_analysis}, 
+    tacky::{tacky, tacky_ast::IRProgram},
+    assembly::{assembly, assembly_ast::AssemblyProgram}, 
+    code_emission::code_emission, 
+};
 
 enum CompilerFlags {
     StopAtLex,
@@ -15,7 +24,6 @@ enum CompilerFlags {
     StopAtCodeGen,
     StopAtAssembly,
     SkipLinker,
-
     InvalidFlag
 }
 
@@ -25,9 +33,39 @@ struct PathData {
     pub file_path: String
 }
 
+impl PathData {
+    /// Returns a PathData struct based on given path.
+    fn new(path: &Path) -> Self {
+        let file_stem = path
+            .file_stem()
+            .expect("file stem should exist")
+            .to_str()
+            .expect("file stem should be converted to str")
+            .to_string();
+
+        let file_parent = path
+            .parent()
+            .expect("file parent should exist")
+            .to_str()
+            .expect("file parent should be converted to str")
+            .to_string();
+
+        let file_path = path
+            .to_str()
+            .expect("file path should be converted to str")
+            .to_string();
+
+        Self {
+            file_path,
+            file_stem,
+            file_parent,
+        }
+    }
+}
+
 /// Starts the compiler based on command-line arguments.
 pub fn compiler_driver() {
-    let args : Vec<String> = env::args().collect();
+    let args: Vec<String> = env::args().collect();
     match args.len() {
         1 => panic!("rcc: no input files"),
         2 => create_executable(Path::new(&args[1]), true),
@@ -36,37 +74,9 @@ pub fn compiler_driver() {
     }
 }
 
-/// Returns a PathData struct based on given path.
-fn create_pathdata(path: &Path) -> PathData {
-    let file_stem = path
-        .file_stem()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
-
-    let file_parent = path
-        .parent()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
-
-    let file_path = path
-        .to_str()
-        .unwrap()
-        .to_string();
-
-    PathData {
-        file_path,
-        file_stem,
-        file_parent,
-    }
-}
-
 /// Creates an executable based on the code given at path.
 fn create_executable(path: &Path, invoke_linker: bool) {
-    let path_data = create_pathdata(path);
+    let path_data = PathData::new(path);
     run_preprocessor(&path_data);
     compile_preprocessed_file(&path_data, path);
     assemble_and_link_file(&path_data, invoke_linker);
@@ -100,7 +110,6 @@ fn get_compiler_flag(flag: &str) -> CompilerFlags {
 /// and prints completion message to stdout.
 fn handle_flag(path: &Path, flag: CompilerFlags) {
     match flag {
-        CompilerFlags::InvalidFlag     => (),
         CompilerFlags::StopAtLex       => {
             stop_at_lex(path);
             println!("Stopped after lexing!");
@@ -127,13 +136,14 @@ fn handle_flag(path: &Path, flag: CompilerFlags) {
         },
         CompilerFlags::SkipLinker      => {
             create_executable(path, false);
-        }
+        },
+        CompilerFlags::InvalidFlag     => (),
     }
 }
 
 /// Returns a vector of tokens to parse
 pub fn stop_at_lex(path: &Path) -> Vec<Tokens> {
-    let pd = create_pathdata(path);
+    let pd = PathData::new(path);
     run_preprocessor(&pd);
     let file_path_i = get_preprocessed_file_path(&pd);
     lexer(&file_path_i)
@@ -167,7 +177,7 @@ pub fn stop_at_codegen(path: &Path) -> (AssemblyProgram, HashMap<String, TypeDat
 
 /// Generates assembly and writes to a .s file.
 pub fn stop_at_assembly(path: &Path) {
-    let path_data = create_pathdata(path);
+    let path_data = PathData::new(path);
     run_preprocessor(&path_data);
     compile_preprocessed_file(&path_data, path);
 }
