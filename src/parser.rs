@@ -1,4 +1,6 @@
+use std::mem::discriminant;
 use crate::lexer::Tokens;
+use crate::lexer::Span;
 use crate::parser::parser_ast::BinaryOperator;
 use crate::parser::parser_ast::Block;
 use crate::parser::parser_ast::StorageClass;
@@ -162,7 +164,7 @@ fn parse_declaration(tokens: &mut Vec<Tokens>) -> Declaration {
     return_token(tokens, identifier_token);
     return_specifier_list(tokens, &mut specifier_list);
 
-    if check_if_function == Tokens::OpenParenthesis {
+    if matches!(check_if_function, Tokens::OpenParenthesis(..)) {
         Declaration::FunDecl(parse_function_declaration(tokens))
     } else {
         Declaration::VarDecl(parse_variable_declaration(tokens))
@@ -174,13 +176,13 @@ fn parse_function_declaration(tokens: &mut Vec<Tokens>) -> FunctionDeclaration {
     // Checks for function elements surrounding body
     let storage_class = parse_specifiers(tokens);
     let name = parse_identifier(tokens);
-    expected_token(Tokens::OpenParenthesis, tokens);
+    expected_token(Tokens::OpenParenthesis(Span::default()), tokens);
     let param_list = parse_param_list(tokens);
-    expected_token(Tokens::ClosedParenthesis, tokens);
+    expected_token(Tokens::ClosedParenthesis(Span::default()), tokens);
     let next_token = peek(tokens);
     
-    if next_token == Tokens::Semicolon {
-        expected_token(Tokens::Semicolon, tokens);
+    if matches!(next_token, Tokens::Semicolon(..)) {
+        expected_token(Tokens::Semicolon(Span::default()), tokens);
         return FunctionDeclaration::Function(name, param_list, None, storage_class);
     }
 
@@ -211,13 +213,13 @@ fn parse_variable_declaration(tokens: &mut Vec<Tokens>) -> VariableDeclaration {
     let identifier = parse_identifier(tokens);
 
     // Either a declaration is initialized or not
-    if peek(tokens) == Tokens::Assignment {
+    if matches!(peek(tokens), Tokens::Assignment(..)) {
         take_token(tokens);
         let exp = parse_exp(tokens, 0);
-        expected_token(Tokens::Semicolon, tokens);
+        expected_token(Tokens::Semicolon(Span::default()), tokens);
         VariableDeclaration::Variable(identifier, Some(exp), storage_class)
     } else {
-        expected_token(Tokens::Semicolon, tokens);
+        expected_token(Tokens::Semicolon(Span::default()), tokens);
         VariableDeclaration::Variable(identifier, None, storage_class)
     }
 }
@@ -237,7 +239,7 @@ fn parse_type_and_storage_class(specifier_list: &Vec<Tokens>) -> (Tokens, Option
     let mut storage_classes: Vec<Tokens> = Vec::new();
 
     for specifier in specifier_list {
-        if *specifier == Tokens::Int {
+        if matches!(*specifier, Tokens::Int(..)) {
             types.push(specifier.clone());
         } else {
             storage_classes.push(specifier.clone())
@@ -251,7 +253,7 @@ fn parse_type_and_storage_class(specifier_list: &Vec<Tokens>) -> (Tokens, Option
         panic!("Invalid storage class");
     }
 
-    let type_specifier = Tokens::Int;
+    let type_specifier = Tokens::Int(Span::default());
     let mut storage_class = None;
 
     if storage_classes.len() == 1 {
@@ -265,8 +267,8 @@ fn parse_type_and_storage_class(specifier_list: &Vec<Tokens>) -> (Tokens, Option
 /// Parses storage class based on input token
 fn parse_storage_class(token: &Tokens) -> Option<StorageClass> {
     match token {
-        Tokens::Static    => Some(StorageClass::Static),
-        Tokens::Extern    => Some(StorageClass::Extern),
+        Tokens::Static(_)    => Some(StorageClass::Static),
+        Tokens::Extern(_)    => Some(StorageClass::Extern),
         _                 => panic!("Invalid storage class passed to parse_storage_class")
     }
 }
@@ -274,9 +276,9 @@ fn parse_storage_class(token: &Tokens) -> Option<StorageClass> {
 /// Checks if next token is a specifier
 fn is_specifier(token: &Tokens) -> bool {
     match token {
-        Tokens::Int
-        | Tokens::Static
-        | Tokens::Extern => true,
+        Tokens::Int(_)
+        | Tokens::Static(_)
+        | Tokens::Extern(_) => true,
         _                => false
     }
 }
@@ -285,23 +287,23 @@ fn parse_param_list(tokens: &mut Vec<Tokens>) -> Vec<String> {
     let mut return_val: Vec<String> = Vec::new();
     let mut next_token = peek(tokens);
 
-    if next_token == Tokens::Void {
-        expected_token(Tokens::Void, tokens);
+    if matches!(next_token, Tokens::Void(..)) {
+        expected_token(Tokens::Void(Span::default()), tokens);
         return return_val;
-    } else if next_token != Tokens::Int {
+    } else if !matches!(next_token, Tokens::Int(..)) {
         panic!("Empty parameter list without void keyword.")
     } 
 
-    while next_token == Tokens::Int {
-        expected_token(Tokens::Int, tokens);
+    while matches!(next_token, Tokens::Int(..)) {
+        expected_token(Tokens::Int(Span::default()), tokens);
         let identifier = parse_identifier(tokens);
         return_val.push(identifier);
         next_token = peek(tokens);
         
-        if next_token == Tokens::Comma {
-            expected_token(Tokens::Comma, tokens);
+        if matches!(next_token, Tokens::Comma(..)) {
+            expected_token(Tokens::Comma(Span::default()), tokens);
             next_token = peek(tokens);
-            if next_token != Tokens::Int {
+            if !matches!(next_token, Tokens::Int(..)) {
                 panic!("trailing comma in function parameter list.");
             }
         }
@@ -312,11 +314,11 @@ fn parse_param_list(tokens: &mut Vec<Tokens>) -> Vec<String> {
 
 /// Handles a list of statements/declarations in compound statements and function bodies
 fn parse_block(tokens: &mut Vec<Tokens>) -> Block {
-    expected_token(Tokens::OpenCurlyBrace, tokens);
+    expected_token(Tokens::OpenCurlyBrace(Span::default()), tokens);
     let mut block_body: Vec<BlockItem> = Vec::new();
     
     // Goes through every line inside function body
-    while peek(tokens) != Tokens::ClosedCurlyBrace {
+    while !matches!(peek(tokens), Tokens::ClosedCurlyBrace(..)) {
         let next_block_item = parse_block_item(tokens);
         block_body.push(next_block_item);
     }
@@ -328,7 +330,7 @@ fn parse_block(tokens: &mut Vec<Tokens>) -> Block {
 fn parse_identifier(tokens: &mut Vec<Tokens>) -> String {
     let val = take_token(tokens);
     let val = match val {
-        Tokens::Identifier(str) => str,
+        Tokens::Identifier(str, _) => str,
         _ => panic!("Not a valid identifier: {:?}", val)
     };
     val
@@ -352,74 +354,74 @@ fn parse_block_item(tokens: &mut Vec<Tokens>) -> BlockItem {
 /// Parses return, expression, and null statements.
 fn parse_statement(tokens: &mut Vec<Tokens>) -> Statement {
     let next_token = peek(tokens);
-    if next_token == Tokens::Return {
+    if matches!(next_token, Tokens::Return(..)) {
         // Handles returns
         take_token(tokens);
         let return_val = parse_exp(tokens, 0);
-        expected_token(Tokens::Semicolon, tokens);
+        expected_token(Tokens::Semicolon(Span::default()), tokens);
         Statement::Return(return_val)
-    } else if next_token == Tokens::Semicolon {
+    } else if matches!(next_token, Tokens::Semicolon(..)) {
         // Handles empty statements
         take_token(tokens);
         Statement::Null
-    } else if next_token == Tokens::If {
+    } else if matches!(next_token, Tokens::If(..)) {
         take_token(tokens);
-        expected_token(Tokens::OpenParenthesis, tokens);
+        expected_token(Tokens::OpenParenthesis(Span::default()), tokens);
         let condition = parse_exp(tokens, 0);
-        expected_token(Tokens::ClosedParenthesis, tokens);
+        expected_token(Tokens::ClosedParenthesis(Span::default()), tokens);
         let if_statement = parse_statement(tokens);
         let next_token = peek(tokens);
         
         // Need to peek to check for optional else
-        if next_token == Tokens::Else {
+        if matches!(next_token, Tokens::Else(..)) {
             take_token(tokens);
             let else_statement = parse_statement(tokens);
             Statement::If(condition, Box::new(if_statement), Some(Box::new(else_statement)))
         } else {
             Statement::If(condition, Box::new(if_statement), None)
         }
-    } else if next_token == Tokens::OpenCurlyBrace {
+    } else if matches!(next_token, Tokens::OpenCurlyBrace(..)) {
         // Start of compound block
         Statement::Compound(parse_block(tokens))
-    } else if next_token == Tokens::Break {
+    } else if matches!(next_token, Tokens::Break(..)) {
         take_token(tokens);
-        expected_token(Tokens::Semicolon, tokens);
+        expected_token(Tokens::Semicolon(Span::default()), tokens);
         Statement::Break("TEMP".to_string())
-    } else if next_token == Tokens::Continue {
+    } else if matches!(next_token, Tokens::Continue(..)) {
         take_token(tokens);
-        expected_token(Tokens::Semicolon, tokens);
+        expected_token(Tokens::Semicolon(Span::default()), tokens);
         Statement::Continue("TEMP".to_string())
-    } else if next_token == Tokens::While {
+    } else if matches!(next_token, Tokens::While(..)) {
         take_token(tokens);
-        expected_token(Tokens::OpenParenthesis, tokens);
+        expected_token(Tokens::OpenParenthesis(Span::default()), tokens);
         let condition = parse_exp(tokens, 0);
-        expected_token(Tokens::ClosedParenthesis, tokens);
+        expected_token(Tokens::ClosedParenthesis(Span::default()), tokens);
         let inner_stat = parse_statement(tokens);
         Statement::While(condition, Box::new(inner_stat), "TEMP".to_string())
-    } else if next_token == Tokens::Do {
+    } else if matches!(next_token, Tokens::Do(..)) {
         take_token(tokens);
         let inner_stat = parse_statement(tokens);
-        expected_token(Tokens::While, tokens);
-        expected_token(Tokens::OpenParenthesis, tokens);
+        expected_token(Tokens::While(Span::default()), tokens);
+        expected_token(Tokens::OpenParenthesis(Span::default()), tokens);
         let condition = parse_exp(tokens, 0);
-        expected_token(Tokens::ClosedParenthesis, tokens);
-        expected_token(Tokens::Semicolon, tokens);
+        expected_token(Tokens::ClosedParenthesis(Span::default()), tokens);
+        expected_token(Tokens::Semicolon(Span::default()), tokens);
         Statement::DoWhile(Box::new(inner_stat), condition, "TEMP".to_string())
-    } else if next_token == Tokens::For {
+    } else if matches!(next_token, Tokens::For(..)) {
         take_token(tokens);
-        expected_token(Tokens::OpenParenthesis, tokens);
+        expected_token(Tokens::OpenParenthesis(Span::default()), tokens);
         let for_init = parse_for_init(tokens);
-        let condition = parse_optional_exp(tokens, Tokens::Semicolon);
-        expected_token(Tokens::Semicolon, tokens);
-        let last_exp = parse_optional_exp(tokens, Tokens::ClosedParenthesis);
-        expected_token(Tokens::ClosedParenthesis, tokens);
+        let condition = parse_optional_exp(tokens, Tokens::Semicolon(Span::default()));
+        expected_token(Tokens::Semicolon(Span::default()), tokens);
+        let last_exp = parse_optional_exp(tokens, Tokens::ClosedParenthesis(Span::default()));
+        expected_token(Tokens::ClosedParenthesis(Span::default()), tokens);
         let inner_stat = parse_statement(tokens);
         Statement::For(for_init, condition, last_exp, Box::new(inner_stat), "TEMP".to_string())
 
     } else {
         // Expression statement
         let exp = parse_exp(tokens, 0);
-        expected_token(Tokens::Semicolon, tokens);
+        expected_token(Tokens::Semicolon(Span::default()), tokens);
         Statement::Expression(exp)
     }
 }
@@ -430,8 +432,8 @@ fn parse_for_init(tokens: &mut Vec<Tokens>) -> ForInit {
     if is_specifier(&next_token) {
         ForInit::InitDecl(parse_variable_declaration(tokens))
     } else {
-        let return_val = ForInit::InitExp(parse_optional_exp(tokens, Tokens::Semicolon));
-        expected_token(Tokens::Semicolon, tokens);
+        let return_val = ForInit::InitExp(parse_optional_exp(tokens, Tokens::Semicolon(Span::default())));
+        expected_token(Tokens::Semicolon(Span::default()), tokens);
         return_val
     }
 }
@@ -443,7 +445,7 @@ fn parse_exp(tokens: &mut Vec<Tokens>, min_prec: i32) -> Exp {
     let mut left = parse_factor(tokens);
     let mut next_token = peek(tokens);
     while is_binop(&next_token) && precedence(&next_token) >= min_prec {
-        if next_token == Tokens::Assignment {
+        if matches!(next_token, Tokens::Assignment(..)) {
             take_token(tokens);
             let right = parse_exp(tokens, precedence(&next_token));
             left = Exp::Assignment(Box::new(left), Box::new(right));
@@ -451,7 +453,7 @@ fn parse_exp(tokens: &mut Vec<Tokens>, min_prec: i32) -> Exp {
             let operator = parse_binop(tokens);
             let right = parse_exp(tokens, precedence(&next_token));
             left = Exp::Assignment(Box::new(left.clone()), Box::new(Exp::Binary(operator, Box::new(left), Box::new(right))));
-        } else if next_token == Tokens::QuestionMark {
+        } else if matches!(next_token, Tokens::QuestionMark(..)) {
             let middle = parse_conditional_middle(tokens);
             let right = parse_exp(tokens, precedence(&next_token));
             left = Exp::Conditional(Box::new(left), Box::new(middle), Box::new(right))
@@ -486,7 +488,7 @@ fn parse_factor(tokens: &mut Vec<Tokens>) -> Exp {
         let identifier = parse_identifier(tokens);
         let next_token = check_for_postfix_operator(tokens);
         if is_increment_or_decrement(&next_token) {
-            if next_token == Tokens::Increment {
+            if matches!(next_token, Tokens::Increment(..)) {
                 let assign = Exp::Assignment(Box::new(Exp::Var(identifier.clone())), Box::new(Exp::Binary(BinaryOperator::Add, Box::new(Exp::Var(identifier.clone())), Box::new(Exp::Constant(1)))));
                 Exp::Binary(BinaryOperator::Subtract, Box::new(assign), Box::new(Exp::Constant(1)))
                 
@@ -494,10 +496,10 @@ fn parse_factor(tokens: &mut Vec<Tokens>) -> Exp {
                 let assign = Exp::Assignment(Box::new(Exp::Var(identifier.clone())), Box::new(Exp::Binary(BinaryOperator::Subtract, Box::new(Exp::Var(identifier.clone())), Box::new(Exp::Constant(1)))));
                 Exp::Binary(BinaryOperator::Add, Box::new(assign), Box::new(Exp::Constant(1)))
             }
-        } else if peek(tokens) == Tokens::OpenParenthesis {
-            expected_token(Tokens::OpenParenthesis, tokens);
+        } else if matches!(peek(tokens), Tokens::OpenParenthesis(..)) {
+            expected_token(Tokens::OpenParenthesis(Span::default()), tokens);
             let args = parse_argument_list(tokens);
-            expected_token(Tokens::ClosedParenthesis, tokens);
+            expected_token(Tokens::ClosedParenthesis(Span::default()), tokens);
             Exp::FunctionCall(identifier, args)
         } else {
             Exp::Var(identifier)
@@ -507,7 +509,7 @@ fn parse_factor(tokens: &mut Vec<Tokens>) -> Exp {
         if is_increment_or_decrement(&next_token) {
             take_token(tokens);
             let inner_exp = parse_factor(tokens);
-            if next_token == Tokens::Increment {
+            if matches!(next_token, Tokens::Increment(..)) {
                 Exp::Assignment(Box::new(inner_exp.clone()), Box::new(Exp::Binary(BinaryOperator::Add, Box::new(inner_exp), Box::new(Exp::Constant(1)))))
             } else {
                 Exp::Assignment(Box::new(inner_exp.clone()), Box::new(Exp::Binary(BinaryOperator::Subtract, Box::new(inner_exp), Box::new(Exp::Constant(1)))))
@@ -517,10 +519,10 @@ fn parse_factor(tokens: &mut Vec<Tokens>) -> Exp {
             let inner_exp = parse_factor(tokens);
             Exp::Unary(operator, Box::new(inner_exp))
         }
-    } else if next_token == Tokens::OpenParenthesis {
+    } else if matches!(next_token, Tokens::OpenParenthesis(..)) {
         take_token(tokens);
         let inner_exp = parse_exp(tokens, 0);
-        expected_token(Tokens::ClosedParenthesis, tokens);
+        expected_token(Tokens::ClosedParenthesis(Span::default()), tokens);
         return inner_exp
     } else {
         panic!("Malformed expression: {next_token:?}")
@@ -532,12 +534,12 @@ fn parse_argument_list(tokens: &mut Vec<Tokens>) -> Vec<Exp> {
     let mut return_val: Vec<Exp> = Vec::new();
     let mut next_token = peek(tokens);
 
-    while next_token != Tokens::ClosedParenthesis {
+    while !matches!(next_token, Tokens::ClosedParenthesis(..)) {
         return_val.push(parse_exp(tokens, 0));
         next_token = peek(tokens);
         
-        if next_token == Tokens::Comma {
-            expected_token(Tokens::Comma, tokens);
+        if matches!(next_token, Tokens::Comma(..)) {
+            expected_token(Tokens::Comma(Span::default()), tokens);
         }
     }
 
@@ -547,7 +549,7 @@ fn parse_argument_list(tokens: &mut Vec<Tokens>) -> Vec<Exp> {
 fn parse_int(tokens: &mut Vec<Tokens>) -> i32 {
     let val = take_token(tokens);
     let val = match val {
-        Tokens::IntegerConstant(i32_num) => i32_num,
+        Tokens::IntegerConstant(i32_num, _) => i32_num,
         _ => panic!("Not a valid i32 integer: '{:?}'", val)
     };
     val
@@ -556,9 +558,9 @@ fn parse_int(tokens: &mut Vec<Tokens>) -> i32 {
 fn parse_unop(tokens: &mut Vec<Tokens>) -> UnaryOperator {
     let unop = take_token(tokens);
     let unop = match unop {
-        Tokens::Negation    => UnaryOperator::Negate,
-        Tokens::Complement  => UnaryOperator::Complement,
-        Tokens::LogicalNOT  => UnaryOperator::LogicalNot, 
+        Tokens::Negation(_)    => UnaryOperator::Negate,
+        Tokens::Complement(_)  => UnaryOperator::Complement,
+        Tokens::LogicalNOT(_)  => UnaryOperator::LogicalNot, 
         _ => panic!("Failure in parse_unop.")
     };
     unop
@@ -568,59 +570,59 @@ fn parse_unop(tokens: &mut Vec<Tokens>) -> UnaryOperator {
 fn parse_binop(tokens: &mut Vec<Tokens>) -> BinaryOperator {
     let token = take_token(tokens);
     match token {
-        Tokens::Add            
-        | Tokens::AddAssign           => BinaryOperator::Add,
-        Tokens::Negation 
-        | Tokens::SubtractAssign      => BinaryOperator::Subtract,
-        Tokens::Multiply
-        | Tokens::MultiplyAssign      => BinaryOperator::Multiply,
-        Tokens::Divide         
-        | Tokens::DivideAssign        => BinaryOperator::Divide,
-        Tokens::Remainder     
-        | Tokens::RemainderAssign     => BinaryOperator::Remainder,
-        Tokens::BitwiseAND     
-        | Tokens::BitwiseANDAssign    => BinaryOperator::BitwiseAND,
-        Tokens::BitwiseOR      
-        | Tokens::BitwiseORAssign     => BinaryOperator::BitwiseOR,
-        Tokens::BitwiseXOR     
-        | Tokens::BitwiseXORAssign    => BinaryOperator::BitwiseXOR,
-        Tokens::LeftShift      
-        | Tokens::LeftShiftAssign     => BinaryOperator::LeftShift,
-        Tokens::RightShift     
-        | Tokens::RightShiftAssign    => BinaryOperator::RightShift,
-        Tokens::LogicalAND     => BinaryOperator::LogicalAND,
-        Tokens::LogicalOR      => BinaryOperator::LogicalOR,
-        Tokens::EqualTo        => BinaryOperator::EqualTo,
-        Tokens::NotEqualTo     => BinaryOperator::NotEqualTo,
-        Tokens::LessThan       => BinaryOperator::LessThan,
-        Tokens::GreaterThan    => BinaryOperator::GreaterThan,
-        Tokens::LessOrEqual    => BinaryOperator::LessOrEqual,
-        Tokens::GreaterOrEqual => BinaryOperator::GreaterOrEqual,
+        Tokens::Add(_)            
+        | Tokens::AddAssign(_)           => BinaryOperator::Add,
+        Tokens::Negation(_) 
+        | Tokens::SubtractAssign(_)      => BinaryOperator::Subtract,
+        Tokens::Multiply(_)
+        | Tokens::MultiplyAssign(_)      => BinaryOperator::Multiply,
+        Tokens::Divide(_)         
+        | Tokens::DivideAssign(_)        => BinaryOperator::Divide,
+        Tokens::Remainder(_)     
+        | Tokens::RemainderAssign(_)     => BinaryOperator::Remainder,
+        Tokens::BitwiseAND(_)     
+        | Tokens::BitwiseANDAssign(_)    => BinaryOperator::BitwiseAND,
+        Tokens::BitwiseOR(_)      
+        | Tokens::BitwiseORAssign(_)     => BinaryOperator::BitwiseOR,
+        Tokens::BitwiseXOR(_)     
+        | Tokens::BitwiseXORAssign(_)    => BinaryOperator::BitwiseXOR,
+        Tokens::LeftShift(_)      
+        | Tokens::LeftShiftAssign(_)     => BinaryOperator::LeftShift,
+        Tokens::RightShift(_)     
+        | Tokens::RightShiftAssign(_)    => BinaryOperator::RightShift,
+        Tokens::LogicalAND(_)     => BinaryOperator::LogicalAND,
+        Tokens::LogicalOR(_)      => BinaryOperator::LogicalOR,
+        Tokens::EqualTo(_)        => BinaryOperator::EqualTo,
+        Tokens::NotEqualTo(_)     => BinaryOperator::NotEqualTo,
+        Tokens::LessThan(_)       => BinaryOperator::LessThan,
+        Tokens::GreaterThan(_)    => BinaryOperator::GreaterThan,
+        Tokens::LessOrEqual(_)    => BinaryOperator::LessOrEqual,
+        Tokens::GreaterOrEqual(_) => BinaryOperator::GreaterOrEqual,
         _ => panic!("Issue in parse_binop")
     }
 }
 
 /// Deals with "? e1 :" of "cond ? e1 : e2" expressions.
 fn parse_conditional_middle(tokens: &mut Vec<Tokens>) -> Exp {
-    expected_token(Tokens::QuestionMark, tokens);
+    expected_token(Tokens::QuestionMark(Span::default()), tokens);
     let return_val = parse_exp(tokens, 0);
-    expected_token(Tokens::Colon, tokens);
+    expected_token(Tokens::Colon(Span::default()), tokens);
 
     return_val
 }
 
 fn is_compound_assignment(token: &Tokens) -> bool {
     match token {
-        Tokens::AddAssign
-        | Tokens::SubtractAssign
-        | Tokens::MultiplyAssign
-        | Tokens::DivideAssign
-        | Tokens::RemainderAssign
-        | Tokens::BitwiseANDAssign
-        | Tokens::BitwiseORAssign
-        | Tokens::BitwiseXORAssign
-        | Tokens::LeftShiftAssign
-        | Tokens::RightShiftAssign => true,
+        Tokens::AddAssign(_)
+        | Tokens::SubtractAssign(_)
+        | Tokens::MultiplyAssign(_)
+        | Tokens::DivideAssign(_)
+        | Tokens::RemainderAssign(_)
+        | Tokens::BitwiseANDAssign(_)
+        | Tokens::BitwiseORAssign(_)
+        | Tokens::BitwiseXORAssign(_)
+        | Tokens::LeftShiftAssign(_)
+        | Tokens::RightShiftAssign(_) => true,
         _                 => false
     }
 }
@@ -628,7 +630,7 @@ fn is_compound_assignment(token: &Tokens) -> bool {
 /// Removes token and checks if removed value is the expected token.
 fn expected_token(expected: Tokens, tokens: &mut Vec<Tokens>) {
     let actual = take_token(tokens);
-    if actual != expected {
+    if !matches!((&actual, &expected), (a, b) if discriminant(a) == discriminant(b)) {
         panic!("Actual token '{:?}' does not match expected token '{:?}'", actual, expected);
     }
 }
@@ -657,33 +659,33 @@ fn peek(tokens: &mut Vec<Tokens>) -> Tokens {
 
 fn is_identifier(token: &Tokens) -> bool {
     match token {
-        Tokens::Identifier(_) => true,
+        Tokens::Identifier(..) => true,
         _ => false
     }
 }
 
 fn is_int(token: &Tokens) -> bool {
     match token {
-        Tokens::IntegerConstant(_) => true,
+        Tokens::IntegerConstant(..) => true,
         _ => false
     }
 }
 
 fn is_unop(token: &Tokens) -> bool {
     match token {
-        Tokens::Negation
-        | Tokens::Complement
-        | Tokens::LogicalNOT
-        | Tokens::Increment
-        | Tokens::Decrement => true,
+        Tokens::Negation(_)
+        | Tokens::Complement(_)
+        | Tokens::LogicalNOT(_)
+        | Tokens::Increment(_)
+        | Tokens::Decrement(_) => true,
         _ => false
     }
 }
 
 fn is_increment_or_decrement(token: &Tokens) -> bool {
     match token {
-        Tokens::Increment
-        | Tokens::Decrement => true,
+        Tokens::Increment(_)
+        | Tokens::Decrement(_) => true,
         _ => false
     }
 }
@@ -693,19 +695,19 @@ fn check_for_postfix_operator(tokens: &mut Vec<Tokens>) -> Tokens {
     let mut next_token = take_token(tokens);
     let mut number_of_closed_parenthesis = 0;
 
-    while next_token == Tokens::ClosedParenthesis {
+    while matches!(next_token, Tokens::ClosedParenthesis(..)) {
         number_of_closed_parenthesis += 1;
         next_token = take_token(tokens);
     }
 
     let return_val = next_token.clone();
 
-    if next_token != Tokens::Increment && next_token != Tokens::Decrement {
+    if !matches!(next_token, Tokens::Increment(..)) && !matches!(next_token, Tokens::Decrement(..)) {
         tokens.push(next_token.clone());
     }
 
     while number_of_closed_parenthesis > 0 {
-        tokens.push(Tokens::ClosedParenthesis);
+        tokens.push(Tokens::ClosedParenthesis(Span::default()));
         number_of_closed_parenthesis -= 1;
     }
 
@@ -714,36 +716,36 @@ fn check_for_postfix_operator(tokens: &mut Vec<Tokens>) -> Tokens {
 
 fn is_binop(token: &Tokens) -> bool {
     match token {
-        Tokens::Add       
-        | Tokens::Negation 
-        | Tokens::Divide   
-        | Tokens::Multiply 
-        | Tokens::Remainder
-        | Tokens::BitwiseAND
-        | Tokens::BitwiseOR
-        | Tokens::BitwiseXOR
-        | Tokens::LeftShift
-        | Tokens::RightShift 
-        | Tokens::LogicalAND
-        | Tokens::LogicalOR 
-        | Tokens::EqualTo 
-        | Tokens::NotEqualTo
-        | Tokens::LessThan
-        | Tokens::GreaterThan
-        | Tokens::LessOrEqual
-        | Tokens::GreaterOrEqual 
-        | Tokens::Assignment
-        | Tokens::AddAssign   
-        | Tokens::SubtractAssign
-        | Tokens::MultiplyAssign
-        | Tokens::DivideAssign
-        | Tokens::RemainderAssign
-        | Tokens::BitwiseANDAssign
-        | Tokens::BitwiseORAssign
-        | Tokens::BitwiseXORAssign
-        | Tokens::LeftShiftAssign
-        | Tokens::RightShiftAssign
-        | Tokens::QuestionMark     => (),
+        Tokens::Add(_)       
+        | Tokens::Negation(_) 
+        | Tokens::Divide(_)   
+        | Tokens::Multiply(_) 
+        | Tokens::Remainder(_)
+        | Tokens::BitwiseAND(_)
+        | Tokens::BitwiseOR(_)
+        | Tokens::BitwiseXOR(_)
+        | Tokens::LeftShift(_)
+        | Tokens::RightShift(_) 
+        | Tokens::LogicalAND(_)
+        | Tokens::LogicalOR(_) 
+        | Tokens::EqualTo(_) 
+        | Tokens::NotEqualTo(_)
+        | Tokens::LessThan(_)
+        | Tokens::GreaterThan(_)
+        | Tokens::LessOrEqual(_)
+        | Tokens::GreaterOrEqual(_) 
+        | Tokens::Assignment(_)
+        | Tokens::AddAssign(_)   
+        | Tokens::SubtractAssign(_)
+        | Tokens::MultiplyAssign(_)
+        | Tokens::DivideAssign(_)
+        | Tokens::RemainderAssign(_)
+        | Tokens::BitwiseANDAssign(_)
+        | Tokens::BitwiseORAssign(_)
+        | Tokens::BitwiseXORAssign(_)
+        | Tokens::LeftShiftAssign(_)
+        | Tokens::RightShiftAssign(_)
+        | Tokens::QuestionMark(_)     => (),
         _ => return false
     }
     true
@@ -752,24 +754,24 @@ fn is_binop(token: &Tokens) -> bool {
 /// Returns assigned precedence of binary tokens.
 fn precedence(next_token: &Tokens) -> i32 {
     match next_token {
-        Tokens::Multiply | Tokens::Divide | Tokens::Remainder => 60,
-        Tokens::Add | Tokens::Negation                        => 55,
-        Tokens::LeftShift | Tokens::RightShift                => 50,
-        Tokens::LessThan | Tokens::LessOrEqual
-        | Tokens::GreaterThan | Tokens::GreaterOrEqual        => 45,
-        Tokens::EqualTo | Tokens::NotEqualTo                  => 42,
-        Tokens::BitwiseAND                                    => 40,
-        Tokens::BitwiseXOR                                    => 35,
-        Tokens::BitwiseOR                                     => 30,
-        Tokens::LogicalAND                                    => 25,
-        Tokens::LogicalOR                                     => 20,
-        Tokens::QuestionMark                                  => 10,
-        Tokens::Assignment | Tokens::AddAssign 
-        | Tokens::SubtractAssign | Tokens::MultiplyAssign
-        | Tokens::DivideAssign | Tokens::RemainderAssign
-        | Tokens::BitwiseANDAssign | Tokens::BitwiseORAssign
-        | Tokens::BitwiseXORAssign | Tokens::LeftShiftAssign
-        | Tokens::RightShiftAssign                            => 1,
+        Tokens::Multiply(_) | Tokens::Divide(_) | Tokens::Remainder(_) => 60,
+        Tokens::Add(_) | Tokens::Negation(_)                     => 55,
+        Tokens::LeftShift(_) | Tokens::RightShift(_)             => 50,
+        Tokens::LessThan(_) | Tokens::LessOrEqual(_)
+        | Tokens::GreaterThan(_) | Tokens::GreaterOrEqual(_)     => 45,
+        Tokens::EqualTo(_) | Tokens::NotEqualTo(_)               => 42,
+        Tokens::BitwiseAND(_)                                    => 40,
+        Tokens::BitwiseXOR(_)                                    => 35,
+        Tokens::BitwiseOR(_)                                     => 30,
+        Tokens::LogicalAND(_)                                    => 25,
+        Tokens::LogicalOR(_)                                     => 20,
+        Tokens::QuestionMark(_)                                  => 10,
+        Tokens::Assignment(_) | Tokens::AddAssign(_) 
+        | Tokens::SubtractAssign(_) | Tokens::MultiplyAssign(_)
+        | Tokens::DivideAssign(_) | Tokens::RemainderAssign(_)
+        | Tokens::BitwiseANDAssign(_) | Tokens::BitwiseORAssign(_)
+        | Tokens::BitwiseXORAssign(_) | Tokens::LeftShiftAssign(_)
+        | Tokens::RightShiftAssign(_)                            => 1,
         _ => panic!("Non-valid token in precedence: {next_token:?}")
     }
 }

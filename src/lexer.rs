@@ -5,7 +5,7 @@ use std::{
 
 use regex::{Regex, RegexSet};
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Default, Debug, PartialEq, Clone)]
 pub struct Span {
     line_number: usize,
     col_number: usize,
@@ -14,13 +14,17 @@ pub struct Span {
 }
 
 impl Span {
-    fn new(line_number: usize, col_number: usize, starting_offset: usize, ending_offset: usize) -> Self {
+    pub fn new(line_number: usize, col_number: usize, starting_offset: usize, ending_offset: usize) -> Self {
         Self {
             line_number: line_number,
             col_number: col_number,
             starting_offset: starting_offset,
             ending_offset: ending_offset
         }
+    }
+
+    pub fn update_ending_offset(&mut self, ending_offset: usize) {
+        self.ending_offset = ending_offset;
     }
 }
 
@@ -190,18 +194,21 @@ pub fn lexer(path: &String) -> Vec<Tokens> {
     let mut line_number: usize = 1;
     let mut col_number: usize = 1;
     while !code_data.is_empty() {
-        //dbg!(&code_data);
-        dbg!(&starting_byte_offset);
-        dbg!(&line_number);
-        dbg!(&col_number);
-        println!();
-        let (token, longest_match) = match_tokens(&code_data, &token_set, &regexes, Span::new(0,0,0,0));
+        dbg!(&code_data);
+        // dbg!(&starting_byte_offset);
+        // dbg!(&line_number);
+        // dbg!(&col_number);
+        // println!();
+        let (token, longest_match) = match_tokens(&code_data, &token_set, &regexes, 
+            Span::new(line_number, col_number, starting_byte_offset,0));
         tokens.push(token);
         starting_byte_offset += longest_match.len();
         col_number += longest_match.len();
         code_data = String::from(code_data.strip_prefix(longest_match.as_str()).unwrap());
-        if check_start(&mut code_data) {
-            line_number += 1;
+        let newline_count = get_newlines_before_tokens(&mut code_data);
+        dbg!(&newline_count);
+        if newline_count > 0 {
+            line_number += newline_count;
             col_number = 1;
         }
         let temp_code_data = code_data.trim_start().to_string();
@@ -216,20 +223,21 @@ pub fn lexer(path: &String) -> Vec<Tokens> {
     tokens
 }
 
-fn check_start(code_data: &mut String) -> bool {
+fn get_newlines_before_tokens(code_data: &mut String) -> usize {
+    let mut count = 0;
     for byte in code_data.bytes() {
         if !byte.is_ascii_whitespace() {
             break;
         }
         if byte == b'\n' {
-            return true
+            count += 1;
         }
     }
-    false
+    count
 }
 
 /// Returns the longest token matched.
-fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>, span: Span) -> (Tokens, String)  {
+fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>, mut span: Span) -> (Tokens, String)  {
     let data_str = data.as_str();
 
     // Scan again to collect matches
@@ -247,6 +255,10 @@ fn match_tokens(data: &String, token_set: &RegexSet, regexes: &Vec<Regex>, span:
         }
     }
     
+    if !longest_match.is_empty() {
+        span.update_ending_offset(span.starting_offset + longest_match.len() - 1);
+    }
+
     let token = match longest_match {
             "int"         => Tokens::Int(span),
             "void"        => Tokens::Void(span),
